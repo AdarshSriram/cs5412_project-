@@ -17,7 +17,7 @@
             <p class="fs-5"> From text box: {{comment}}</p>
             <form action="/upload" method="POST" enctype="multipart/form-data">
               <p class="card-text">Choose a file to upload it to Azure Blob Storage</p>
-              <input type="file" idname="file" value="file">
+              <input type="file" name="file" value="file">
               <hr>
               <input type="submit" name="upload" value="Upload" class="btn btn-success">
             </form>

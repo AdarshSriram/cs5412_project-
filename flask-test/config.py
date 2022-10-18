@@ -16,8 +16,8 @@ MAX_CONTENT_LENGTH = 20 * 1024 * 1024    # 20 Mb limit
 URI = "https://mktplce-fence.documents.azure.com:443/"
 
 BLOB_ACCOUNT_NAME = "mktplcemediastre"
-BLOB_ACCOUNT_KEY = "406g9lTwyfl5Z6nGp3ueGSsnu/POZ3ceeaDixsyTHt4eXKpYb7LFt5J5S7bDIa/uANDxWG86zs0n+AStQhSgVw===="
-BLOB_CONNECTION_STRING = "DefaultEndpointsProtocol=https;AccountName=mktplcemediastre;AccountKey=406g9lTwyfl5Z6nGp3ueGSsnu/POZ3ceeaDixsyTHt4eXKpYb7LFt5J5S7bDIa/uANDxWG86zs0n+AStQhSgVw==;EndpointSuffix=core.windows.net"
+BLOB_ACCOUNT_KEY = "5/vuv4b/g0sdPFTDL0Y8hqut1maNpNuaTHfQ59tBs6wZJboJv5RSIad6JbHSLDaxyKSb8vuM1LuC+AStVyh6fw=="
+BLOB_CONNECTION_STRING = "DefaultEndpointsProtocol=https;AccountName=mktplcemediastre;AccountKey=5/vuv4b/g0sdPFTDL0Y8hqut1maNpNuaTHfQ59tBs6wZJboJv5RSIad6JbHSLDaxyKSb8vuM1LuC+AStVyh6fw==;EndpointSuffix=core.windows.net"
 BLOB_CONTAINER = "media"
 BLOB_ALLOWED_EXTENSIONS = set(['txt', 'pdf', 'png', 'jpg', 'jpeg'])
 BLOB_MAX_CONTENT_LENGTH = 20 * 1024 * 1024    # 20 Mb limit

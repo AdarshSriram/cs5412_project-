@@ -4,7 +4,9 @@ from azure.storage.blob import BlobServiceClient
 import hashlib
 import os
 from werkzeug.utils import secure_filename
-from flask import Flask, render_template, request, redirect, url_for, send_from_directory
+from werkzeug.exceptions import HTTPException
+
+from flask import Flask, render_template, request, redirect, url_for, send_from_directory, json
 app = Flask(__name__)
 
 app.config.from_pyfile('config.py')
@@ -74,11 +76,16 @@ def allowed_file(filename):
 
 @app.route('/upload',methods=['POST'])
 def upload():
+    print('post2')
     if request.method == 'POST':
+        print('post1')
         img = request.files['file']
+        print('hgello123')
         if img and allowed_file(img.filename):
+            print('h23 d d')
             filename = secure_filename(img.filename)
             img.save(filename)
+            print('hello')
             blob_client = blob_service_client.get_blob_client(container = blob_container, blob = filename)
             with open(filename, "rb") as data:
                 try:
@@ -88,6 +95,21 @@ def upload():
                     pass
             os.remove(filename)
     return render_template("index.html", msg=msg)
+
+
+@app.errorhandler(HTTPException)
+def handle_exception(e):
+    """Return JSON instead of HTML for HTTP errors."""
+    # start with the correct headers and status code from the error
+    response = e.get_response()
+    # replace the body with JSON
+    response.data = json.dumps({
+        "code": e.code,
+        "name": e.name,
+        "description": e.description,
+    })
+    response.content_type = "application/json"
+    return response
 
 
 if __name__ == '__main__':
