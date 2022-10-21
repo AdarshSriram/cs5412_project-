@@ -5,8 +5,11 @@ import hashlib
 import os
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
-
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, json
+from geofence import upload_geofence, check_geofence
+import geocoder
+import json
+
 app = Flask(__name__)
 
 app.config.from_pyfile('config.py')
@@ -46,27 +49,111 @@ def favicon():
 
 @app.route('/hello', methods=['POST'])
 def hello():
-   name = request.form.get('name')
-   comment = request.form.get('freeform') 
-   print(comment)
-   if name:
-       print('Request for hello page received with name=%s' % name)
-       insert_container(name+ ' ' + comment)
-       return render_template('hello.html', name = name, comment = comment)
-   else:
-       print('Request for hello page received with no name or blank name -- redirecting')
+    name = request.form.get('name')
+    description = request.form.get('description') 
+    category = request.form.get('category') 
+    user_id = request.form.get('user_id')
+    if name:
+        res, udid, city = upload_geofence()
+        if res not in [200, 202]:
+           print("unable to create goefence")
+           return redirect(url_for('index'))
+        
+        print("geofence successful")
+
+        post_id = insert_container((name, description, city, udid, user_id, category))
+
+        return render_template('hello.html', name = user_id, comment = description)
+    else:
+       print('Request for hello page received with empty text -- redirecting')
        return redirect(url_for('index'))
 
 
 
 
-def insert_container(item):
-    id = hashlib.md5(str(item).encode())
+def insert_container(data):
+    name, description, city, udid, user_id, category = data
+    id = hashlib.md5(str(name + user_id).encode())
     cos_container.upsert_item({
         'id':'item{0}'.format(id.hexdigest()),
-        'test1' : 'test',
-        'field' : '{0}'.format(str(item))
+        'user_id' : str(user_id),
+        "item_name" : name,
+        "description" : description,
+        "fence_udid" : str(udid),
+        "city" : city,
+        "media_id" : "",
+        "category" : category
     })
+    return id
+
+
+def get_posts_by_seller_id(seller_id):
+    items = list(cos_container.query_items(
+    query="SELECT * FROM r WHERE r.user_id=@id",
+    parameters=[
+        { "name":"@id", "value": seller_id }
+    ],
+        enable_cross_partition_query=True
+    ))
+    return items
+
+def get_posts_by_city(city):
+    items = list(cos_container.query_items(
+    query="SELECT * FROM r WHERE r.city=@city",
+    parameters=[
+        { "name":"@city", "value": city }
+    ],
+        enable_cross_partition_query=True
+    ))
+    return items
+
+def get_posts_by_city_and_category(city, category):
+    items = list(cos_container.query_items(
+    query="SELECT * FROM r WHERE r.city=@city AND r.category=@category",
+    parameters=[
+        { "name":"@city", "value": city },
+        { "name":"@category", "value": category },
+    ],
+        enable_cross_partition_query=True
+    ))
+    return items
+
+
+@app.route('/nearby-posts',methods=['GET'])
+def get_nearby_posts():
+    coords = geocoder.ip("me").latlng
+    lat, lng = coords[0], coords[1]
+    city = geocoder.ip("me").city
+    
+    category = request.args.get('category', type = str)
+
+
+    candidate_posts =  []
+
+    if category == "":
+        candidate_posts = get_posts_by_city(city)
+    else:
+        candidate_posts = get_posts_by_city_and_category(city, category)
+
+    res = {"nearby_posts" : []}
+
+    for post in candidate_posts:
+        post = dict(post)
+        if check_geofence(lat, lng, post.get("fence_udid")) :
+            res["nearby_posts"].append(post)
+    print(res)
+    return json.dumps(res)
+
+
+def get_post_by_id(post_id):
+    items = list(cos_container.query_items(
+    query="SELECT * FROM r WHERE r.id=@id",
+    parameters=[
+        { "name":"@id", "value": post_id }
+    ],
+        enable_cross_partition_query=True
+    ))
+    return items
 
 blob_service_client = BlobServiceClient.from_connection_string(blob_connect_str)
 

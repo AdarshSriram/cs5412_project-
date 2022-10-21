@@ -1,17 +1,23 @@
 import requests, json, os, time
 from dotenv import load_dotenv
-
+import geocoder
 
 
 load_dotenv()
 
 maps_key = os.environ['MAPS_KEY']
-coords = [-80.978996, 35.094341]
 
-geofence_udid = ''
 
 def upload_geofence():
-    global geofence_udid
+    coords = geocoder.ip("me").latlng
+# change from lat, lng to lng, lat
+    coords = [coords[1], coords[0]]
+    city = geocoder.ip("me").city
+
+    print(f"Curr Lng : {coords[1]} ,  Curr Lat : {coords[0]}")
+    print(f'City: {city}')
+    print()
+
     geofence_upload_url = 'https://atlas.microsoft.com/mapData/upload'
     params={
         'subscription-key': maps_key,
@@ -30,7 +36,7 @@ def upload_geofence():
         "properties": {
             "subType": "Circle",
             "geometryId" : "1",
-            "radius": 5000
+            "radius": 2500
         }
     }]
     }
@@ -52,11 +58,14 @@ def upload_geofence():
     response = requests.get(resource_location, params=params)
 
     geofence_udid = response.json()['udid']
+
     print()
     print('Geofence UDID:', geofence_udid)
     print()
 
-def check_geofence(lat, lon):
+    return response.status_code, geofence_udid, city
+
+def check_geofence(lat, lon, geofence_udid):
     check_geofence_url = 'https://atlas.microsoft.com/spatial/geofence/json'
     print(geofence_udid)
     params={
@@ -83,12 +92,14 @@ def check_geofence(lat, lon):
 
     if response_json['geometries'][0]['distance'] < 0:
       print("Buyer is inside geofence")
+      return True
     else:
       print("buyer is outside geofence")
+      return False
 
 
     
 
 
-upload_geofence()
-check_geofence(coords[0], coords[1])
+# upload_geofence(coords)
+# check_geofence(coords[0], coords[1])
