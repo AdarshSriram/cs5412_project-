@@ -1,0 +1,40 @@
+<!doctype html>
+
+<head>
+    <title>Home Site</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='bootstrap/css/bootstrap.min.css') }}">
+    <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <script src="{{url_for('static', filename='bootstrap/js/messages.js')}}"></script>
+</head>
+<html>
+
+<body>
+    <main>
+        <div class="px-4 py-3 my-2 text-center">
+        <h1 class="display-6 fw-bold text-primary">Welcome to the marketplace!</h1>
+        </div>
+        {% for dict in recent | batch (3)  %}
+        <div class="row-cols-3" style="display: flex; justify-content: center;">
+            {% for value in dict %}
+            <div class="col-3" style="padding: 10px; background-color: #EEE; margin: 20px; text-align: center;">
+                <p style="font-size: 24px">{{ value["name"] }}</p>
+                <div style="display:flex; justify-content: center; align-items: center; max-height: 90%;">
+                <img style="max-width: 100%; height: auto" src="{{value["img"]}}"/>
+                </div>
+                <p style="font-size: 12px">{{ value["desc"] }}</p>
+
+            </div>
+            {% endfor %}
+
+        </div>
+        {% endfor %}
+
+
+    </div>
+
+    </main>
+
+</body>
+
+
+</html>
