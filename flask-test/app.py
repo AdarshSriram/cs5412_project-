@@ -7,9 +7,12 @@ import requests
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 import ast
+import uuid
+import time
 
-from flask import Flask, render_template, request, redirect, url_for, send_from_directory, json
+from flask import Flask, render_template, request, redirect, url_for, send_from_directory, json, session
 app = Flask(__name__)
+app.config.update(SECRET_KEY=uuid.uuid4().hex)
 
 app.config.from_pyfile('config.py')
 cos_account = app.config['ACCOUNT_NAME']   # Azure account name
@@ -36,15 +39,55 @@ blob_allowed_ext = app.config['BLOB_ALLOWED_EXTENSIONS']  # List of accepted ext
 # Maximum size of the uploaded file
 blob_max_length = app.config['BLOB_MAX_CONTENT_LENGTH']
 
+
 @app.route('/')
 def index():
    print('Request for index page received')
-   return render_template('index.html')
+   msg=session.get('msg')
+   if msg is None:
+    msg= ''
+   print(msg)
+   session['msg'] = ''
+   session['name'] = ''
+   print('session message reset')
+   return render_template('index.html', msg=msg)
 
 @app.route('/query')
 def query():
    print('Request for query page received')
    return render_template('query.html')
+
+@app.route('/home')
+def home():
+   print('Request for home page received')
+   recent = read_recent() # strcture = id=recent, last = last one, recents = values
+   print(recent)
+   recents = recent['recents']
+   recents = ast.literal_eval(recents)
+   print(recents)
+   print(recents[0])
+
+   last = int(recent['last'])-1
+   recents = recents[last:] + recents[:last]
+   rendering = []
+   for i in recents:
+        output = {}
+        print('i', i)
+        read = cos_container.read_item(str(i), partition_key=str(i))
+        try:
+            img = ast.literal_eval(read['blob_id'])[0]
+            img = get_img_url_with_container_sas_token(img)
+            output['img'] = img
+        except:
+            output['img'] = ''
+        name = read['title']
+        output['name'] = name
+        desc = read['desc']
+        output['desc'] = desc
+        rendering += [output]
+        print('img', img)
+
+   return render_template('home.html', recent=rendering)
 
 # using generate_container_sas
 def get_img_url_with_container_sas_token(blob_name):
@@ -95,11 +138,12 @@ post_id = 0
 def hello():
    name = request.form.get('name')
    comment = request.form.get('freeform') 
+   session['name'] = name
    print(comment)
    if name and comment:
        print('Request for hello page received with name=%s' % name)
        global post_id
-       post_id = insert_container(name+ ' ' + comment)
+       post_id = insert_container(name, comment)
        return render_template('hello.html', name = name, comment = comment)
    else:
        print('Request for hello page received with no name or comment -- redirecting')
@@ -108,13 +152,14 @@ def hello():
 
 
 
-def insert_container(item,picture_id=''):
-    id = hashlib.md5(str(item).encode()).hexdigest()
+def insert_container(title, desc,picture_id=''):
+    id = hashlib.md5(str(title).encode()).hexdigest()
     id = 'item'+id
     cos_container.upsert_item({
         'id':'{0}'.format(id),
-        'test1' : 'test',
-        'field' : '{0}'.format(str(item)),
+        'test1' : 'test2',
+        'title' : '{0}'.format(str(title)),
+        'desc' : '{0}'.format(str(desc)),
         'blob_id': '{0}'.format(str(picture_id))
     })
     return id
@@ -125,10 +170,50 @@ def update_container(item,picture_id=''):
     cos_container.upsert_item({
         'id':'{0}'.format(item),
         'test1' : 'test',
-        'field' : '{0}'.format(read['field']),
+        'title' : '{0}'.format(read['title']),
+        'desc' : '{0}'.format(read['desc']),
         'blob_id': '{0}'.format(str(picture_id))
     })
     return id
+
+def read_recent():
+    return cos_container.read_item(('recent'), partition_key='recent')
+
+def update_recent(new_item):
+    try:
+        read = read_recent()
+        print('read')
+        last = int(read['last']) + 1 % 9
+        print('last')
+
+        recents = read['recents']
+        recents = ast.literal_eval(recents)
+
+        print('list')
+
+        if len(recents) == 9:
+            recents[last] = new_item
+        else:
+            recents.append(new_item)
+        cos_container.upsert_item({
+        'id':'{0}'.format('recent'),
+        'last' : '{0}'.format(last),
+        'recents':'{0}'.format(recents) 
+    })
+        print('sucess')
+    except:
+        last = 0
+        recents = [new_item]
+        cos_container.upsert_item({
+        'id':'{0}'.format('recent'),
+        'last' : '{0}'.format(last),
+        'recents':'{0}'.format(recents) 
+    })
+        print('failed123')
+
+        
+
+
 
 blob_service_client = BlobServiceClient.from_connection_string(blob_connect_str)
 
@@ -175,15 +260,23 @@ def upload():
                         except:
                             print('failed')
                             pass
-                msg = "Upload Done!"
+                item_name = session.get('name')
+
+                msg = item_name + " has been uploaded to the server!"
                 os.remove(filename)
             update_container(post_id, file_names)
-            
-            return render_template("index.html", msg=msg)
+            update_recent(post_id)
+            session["msg"] = msg
+
+            return redirect(url_for('index'))
+            # render_template("index.html", msg=msg)
         else:
-            return render_template("index.html", msg='No pics provided.')
+            session["msg"] = 'No pics provided.'
+            return redirect(url_for('index'))
+            # render_template("index.html", msg='No pics provided.')
     else:
-        return render_template("index.html", msg='Upload failed.')
+        session["msg"] ='Upload failed.'
+        return redirect(url_for('index'))
 
 @app.errorhandler(HTTPException)
 def handle_exception(e):

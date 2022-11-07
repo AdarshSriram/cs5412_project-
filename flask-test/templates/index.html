@@ -1,14 +1,15 @@
 <!doctype html>
 <head>
-    <title>Hello Azure - Python Quickstart</title>
+    <title>Listing Site</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='bootstrap/css/bootstrap.min.css') }}">
     <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <script src="{{url_for('static', filename='js/messages.js')}}"></script>
 </head>
 <html>
-   <body>
+   <body onload="reset_message()">
      <main>
         <div class="px-4 py-3 my-2 text-center">
-            <img class="d-block mx-auto mb-4" src="{{ url_for('static', filename='images/azure-icon.svg') }}" alt="Azure Logo" width="192" height="192"/>
+            <!-- <img class="d-block mx-auto mb-4" src="{{ url_for('static', filename='images/azure-icon.svg') }}" alt="Azure Logo" width="192" height="192"/> -->
             <!-- <img  src="/docs/5.1/assets/brand/bootstrap-logo.svg" alt="" width="72" height="57"> -->
             <h1 class="display-6 fw-bold text-primary">Welcome to the listing site!</h1>            
           </div>
@@ -37,9 +38,9 @@
                 <div class="d-grid gap-2 d-sm-flex justify-content-sm-center my-2">
                   <button type="submit" class="btn btn-primary btn-lg px-4 gap-3">Add item!</button>
                 </div>            
-                <p>{{msg}}</p>
+                <p id="message_to_user">{{msg}}</p>
             </div>
         </form>
      </main>      
    </body>
-</html>c
+</html>
