@@ -7,3 +7,5 @@ pylint==2.6.0
 waitress==1.0.1
 azure-cosmos==4.3.0
 werkzeug
+azure-cognitiveservices-vision-computervision
+pillow

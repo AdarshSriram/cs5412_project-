@@ -10,6 +10,11 @@ import ast
 import uuid
 import time
 
+from azure.cognitiveservices.vision.computervision import ComputerVisionClient
+from azure.cognitiveservices.vision.computervision.models import OperationStatusCodes
+from azure.cognitiveservices.vision.computervision.models import VisualFeatureTypes
+from msrest.authentication import CognitiveServicesCredentials
+
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, json, session
 app = Flask(__name__)
 app.config.update(SECRET_KEY=uuid.uuid4().hex)
@@ -38,6 +43,14 @@ blob_container = app.config['BLOB_CONTAINER']  # Container name
 blob_allowed_ext = app.config['BLOB_ALLOWED_EXTENSIONS']  # List of accepted extensions
 # Maximum size of the uploaded file
 blob_max_length = app.config['BLOB_MAX_CONTENT_LENGTH']
+
+cv_subscription_key = app.config['CV_KEY']
+cv_endpoint = app.config['CV_ENDPOINT']
+
+cv_features = ["categories","brands","adult","color","objects"]
+
+cv_client = ComputerVisionClient(
+    cv_endpoint, CognitiveServicesCredentials(cv_subscription_key))
 
 
 @app.route('/')
@@ -84,6 +97,7 @@ def home():
         output['name'] = name
         desc = read['desc']
         output['desc'] = desc
+        output['id'] = i
         rendering += [output]
         print('img', img)
 
@@ -123,9 +137,6 @@ def query_load():
         return render_template("query_load.html", id=item,  img1=img1, img2 = img2, img3=img3, img4=img4)#, ButtonPressed=ButtonPressed)
     return render_template("query_load.html", id = 'error')#, ButtonPressed = ButtonPressed)
 
-# if request.method == "POST":
-        # I think you want to increment, that case ButtonPressed will be plus 1.
-
 
 @app.route('/favicon.ico')
 def favicon():
@@ -149,6 +160,21 @@ def hello():
        print('Request for hello page received with no name or comment -- redirecting')
        return redirect(url_for('index'))
 
+@app.route('/item/<item_id>')
+def item(item_id):
+    read = cos_container.read_item(str(item_id), partition_key=str(item_id))
+    imgs = ast.literal_eval(read['blob_id'])
+    url_img = []
+    for img in imgs:
+        url_img += [get_img_url_with_container_sas_token(img)]
+    desc = read['desc']
+    name = read['title']
+    tags = read.get('tags')
+    if tags is not None:
+        tags = ast.literal_eval(tags)
+        tags = str(tags)
+
+    return render_template('item.html', itemname = name, desc = desc, pics_list = url_img, tags = tags)
 
 
 
@@ -164,7 +190,7 @@ def insert_container(title, desc,picture_id=''):
     })
     return id
 
-def update_container(item,picture_id=''):
+def update_container_pic(item,picture_id=''):
     print(str(item))
     read = cos_container.read_item(str(item), partition_key=str(item))
     cos_container.upsert_item({
@@ -173,6 +199,19 @@ def update_container(item,picture_id=''):
         'title' : '{0}'.format(read['title']),
         'desc' : '{0}'.format(read['desc']),
         'blob_id': '{0}'.format(str(picture_id))
+    })
+    return id
+
+def update_container_tags(item,tags=''):
+    # print(str(item))
+    read = cos_container.read_item(str(item), partition_key=str(item))
+    cos_container.upsert_item({
+        'id':'{0}'.format(item),
+        'test1' : 'test',
+        'title' : '{0}'.format(read['title']),
+        'desc' : '{0}'.format(read['desc']),
+        'blob_id': '{0}'.format(read['blob_id']),
+        'tags':'{0}'.format(str(tags))
     })
     return id
 
@@ -185,12 +224,11 @@ def update_recent(new_item):
         print('read')
         last = int(read['last']) + 1 % 9
         print('last')
-
         recents = read['recents']
         recents = ast.literal_eval(recents)
+        print('recents', recents)
 
         print('list')
-
         if len(recents) == 9:
             recents[last] = new_item
         else:
@@ -230,6 +268,7 @@ def upload():
         img = request.files.getlist('files[]')
         if len(img) > 0:
             file_names = []
+            tags = []
             print('hgello123')
             msg = 'Uploading'
             for file in img:
@@ -246,6 +285,16 @@ def upload():
                         try:
                             blob_client.upload_blob(data, overwrite=True)
                             blob_client.set_blob_metadata({"filename":file.filename})
+                            img_url = get_img_url_with_container_sas_token(blob_id)
+                            # CV may need retry pattern
+                            result = cv_client.tag_image(img_url)
+                            i = 0
+                            for tag in result.tags:
+                                if i < 5:
+                                    tags += [tag.name]
+                                else:
+                                    break
+                                i += 1
                             # blob_service.set_blob_metadata(container_name="mycontainer",
                             #    blob_name="myblob",
                             #    x_ms_meta_name_values={"Meta Century":"Nineteenth","Meta Author":"Mustafa"})
@@ -260,11 +309,17 @@ def upload():
                         except:
                             print('failed')
                             pass
+                    
+
                 item_name = session.get('name')
+
 
                 msg = item_name + " has been uploaded to the server!"
                 os.remove(filename)
-            update_container(post_id, file_names)
+            print(tags)
+            tags = {tag : tags.count(tag) for tag in tags}
+            update_container_pic(post_id, file_names)
+            update_container_tags(post_id, tags)
             update_recent(post_id)
             session["msg"] = msg
 

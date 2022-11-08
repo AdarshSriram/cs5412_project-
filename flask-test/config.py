@@ -21,3 +21,6 @@ BLOB_CONNECTION_STRING = "DefaultEndpointsProtocol=https;AccountName=mktplcemedi
 BLOB_CONTAINER = "media"
 BLOB_ALLOWED_EXTENSIONS = set(['txt', 'pdf', 'png', 'jpg', 'jpeg'])
 BLOB_MAX_CONTENT_LENGTH = 20 * 1024 * 1024    # 20 Mb limit
+
+CV_KEY = 'b9e10182ec6d45aaab209c666aeb73cb'
+CV_ENDPOINT = 'https://projectvisionservice.cognitiveservices.azure.com/'
