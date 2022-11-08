@@ -157,7 +157,16 @@ def hello():
    if name and comment:
        print('Request for hello page received with name=%s' % name)
        global post_id
-       post_id = insert_container(name, comment)
+       res, udid, city = upload_geofence()
+       if res in [200, 202]:
+        post = {
+            "name" : name,
+            "comment":comment,
+            "city": city,
+            "fence_udid" : udid
+        }
+        post_id = insert_container(post)
+
        return render_template('hello.html', name = name, comment = comment)
    else:
        print('Request for hello page received with no name or comment -- redirecting')
@@ -181,12 +190,19 @@ def item(item_id):
 
 
 
-def insert_container(title, desc,picture_id=''):
+def insert_container(post,picture_id=''):
+    title = post["name"]
+    desc = post["comment"]
+    city = post["city"]
+    udid = post["fence_udid"]
+
     id = hashlib.md5(str(title).encode()).hexdigest()
     id = 'item'+id
     cos_container.upsert_item({
         'id':'{0}'.format(id),
         'test1' : 'test2',
+        'city' : city,
+        "fence_udid": udid, 
         'title' : '{0}'.format(str(title)),
         'desc' : '{0}'.format(str(desc)),
         'blob_id': '{0}'.format(str(picture_id))
