@@ -1,44 +1,46 @@
 <!doctype html>
 <head>
-    <title>Hello Azure - Python Quickstart</title>
+    <title>Listing Site</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='bootstrap/css/bootstrap.min.css') }}">
     <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <script src="{{url_for('static', filename='js/messages.js')}}"></script>
 </head>
 <html>
-   <body>
+   <body onload="reset_message()">
      <main>
         <div class="px-4 py-3 my-2 text-center">
-            <img class="d-block mx-auto mb-4" src="{{ url_for('static', filename='images/azure-icon.svg') }}" alt="Azure Logo" width="192" height="192"/>
+            <!-- <img class="d-block mx-auto mb-4" src="{{ url_for('static', filename='images/azure-icon.svg') }}" alt="Azure Logo" width="192" height="192"/> -->
             <!-- <img  src="/docs/5.1/assets/brand/bootstrap-logo.svg" alt="" width="72" height="57"> -->
-            <h1 class="display-6 fw-bold text-primary">Welcome to GeoMarket</h1>  
-            <h3 class="display-6 fw-bold text-secondary">Make a Post</h3>            
+            <h1 class="display-6 fw-bold text-primary">Welcome to the listing site!</h1>            
           </div>
+        <form method="GET" action="{{url_for('query')}}">
+          <div class="d-grid gap-2 d-sm-flex justify-content-sm-center my-2">
+            <button type="submit" class="btn btn-primary btn-lg px-4 gap-3">Go to query!</button>
+          </div>
+        </form>
         <form method="post" action="{{url_for('hello')}}">
             <div class="col-md-6 mx-auto text-center">
-                <label for="name" class="form-label fw-bold fs-5">Item Name</label>
-                <div class="d-grid gap-2 d-sm-flex justify-content-sm-center align-items-center my-1">
+                <label for="name" class="form-label fw-bold fs-5">What item / service do you want to list?</label>
+
+                <!-- <p class="lead mb-2">Could you please tell me your name?</p> -->
+                <div class="d-grid gap-2 d-sm-flex justify-content-sm-center align-items-center my-1">Item / Service Name: 
                     <input type="text" class="form-control" id="name" name="name" style="max-width: 256px;">
                   </div>            
 
-                  <label for="category" class="form-label fw-bold fs-5">Item Description</label>
-
                   <div class="d-grid gap-2 d-sm-flex justify-content-sm-center align-items-center my-1">
-                    <textarea id="description" name="description" rows="4" cols="50" placeholder="Enter brief description here..."></textarea>
+                    <textarea id="freeform" name="freeform" rows="4" cols="50" placeholder="Enter item/service description here..."></textarea>
                   </div>
 
-                  <label for="user_id" class="form-label fw-bold fs-5">Seller Name</label>
-
-                  <div class="d-grid gap-2 d-sm-flex justify-content-sm-center align-items-center my-1">
-                    <textarea id="user_id" name="user_id" rows="4" cols="50" placeholder="Enter your name ..."></textarea>
-                  </div>
-
+                <div>
+                  <p>Pictures can be uploaded on the next page.</p>
+               </div>
                   
                 <div class="d-grid gap-2 d-sm-flex justify-content-sm-center my-2">
-                  <button type="submit" class="btn btn-primary btn-lg px-4 gap-3">Submit Post</button>
+                  <button type="submit" class="btn btn-primary btn-lg px-4 gap-3">Add item!</button>
                 </div>            
-                <p>{{msg}}</p>
+                <p id="message_to_user">{{msg}}</p>
             </div>
         </form>
      </main>      
    </body>
-</html>c
+</html>

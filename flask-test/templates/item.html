@@ -1,0 +1,46 @@
+<!doctype html>
+
+<head>
+    <title>Item Page - {{itemname}}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='bootstrap/css/bootstrap.min.css') }}">
+    <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <script src="{{url_for('static', filename='bootstrap/js/messages.js')}}"></script>
+</head>
+<html>
+
+<body>
+    <main>
+        <div class="px-4 py-3 my-2 text-center">
+            <h1 class="display-6 fw-bold text-primary">{{itemname}}</h1>
+        </div>
+        {% for pics in pics_list | batch (3) %}
+        <div class="row-cols-3" style="display: flex; justify-content: center;">
+            {% for value in pics %}
+            <div class="col-3" style="padding: 10px; background-color: #EEE; margin: 20px; text-align: center;">
+                <p></p>
+                <div style="display:flex; justify-content: center; align-items: center; max-height: 90%;">
+                    <img style="max-width: 100%; height: auto" src="{{value}}" />
+                </div>
+            </div>
+            {% endfor %}
+
+        </div>
+        {% endfor %}
+        <div style="display:flex; align-items: center; justify-content: center;">
+            <p style="font-size: 24px; text-align: center;">Description: <br>{{ desc }} </p>
+            
+        </div>
+        <div style="display:flex; align-items: center; justify-content: center;">
+            <p style="font-size: 16px; text-align: center;">Item Categories: <br>{{ tags }} </p>
+        
+        </div>
+
+
+        </div>
+
+    </main>
+
+</body>
+
+
+</html>

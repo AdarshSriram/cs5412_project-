@@ -1,16 +1,26 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from azure.cosmos import CosmosClient
-from azure.storage.blob import BlobServiceClient
+from azure.storage.blob import BlobServiceClient,generate_container_sas, ContainerSasPermissions
 import hashlib
 import os
+import requests
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
-from flask import Flask, render_template, request, redirect, url_for, send_from_directory, json
+import ast
+import uuid
+import time
+from azure.cognitiveservices.vision.computervision import ComputerVisionClient
+from azure.cognitiveservices.vision.computervision.models import OperationStatusCodes
+from azure.cognitiveservices.vision.computervision.models import VisualFeatureTypes
+from msrest.authentication import CognitiveServicesCredentials
+
+from flask import Flask, render_template, request, redirect, url_for, send_from_directory, json, session
 from geofence import upload_geofence, check_geofence
 import geocoder
 import json
 
 app = Flask(__name__)
+app.config.update(SECRET_KEY=uuid.uuid4().hex)
 
 app.config.from_pyfile('config.py')
 cos_account = app.config['ACCOUNT_NAME']   # Azure account name
@@ -37,52 +47,174 @@ blob_allowed_ext = app.config['BLOB_ALLOWED_EXTENSIONS']  # List of accepted ext
 # Maximum size of the uploaded file
 blob_max_length = app.config['BLOB_MAX_CONTENT_LENGTH']
 
+cv_subscription_key = app.config['CV_KEY']
+cv_endpoint = app.config['CV_ENDPOINT']
+
+cv_features = ["categories","brands","adult","color","objects"]
+
+cv_client = ComputerVisionClient(
+    cv_endpoint, CognitiveServicesCredentials(cv_subscription_key))
+
+
 @app.route('/')
 def index():
    print('Request for index page received')
-   return render_template('index.html')
+   msg=session.get('msg')
+   if msg is None:
+    msg= ''
+   print(msg)
+   session['msg'] = ''
+   session['name'] = ''
+   print('session message reset')
+   return render_template('index.html', msg=msg)
+
+@app.route('/query')
+def query():
+   print('Request for query page received')
+   return render_template('query.html')
+
+@app.route('/home')
+def home():
+   print('Request for home page received')
+   recent = read_recent() # strcture = id=recent, last = last one, recents = values
+   print(recent)
+   recents = recent['recents']
+   recents = ast.literal_eval(recents)
+   print(recents)
+   print(recents[0])
+
+   last = int(recent['last'])-1
+   recents = recents[last:] + recents[:last]
+   rendering = []
+   for i in recents:
+        output = {}
+        print('i', i)
+        read = cos_container.read_item(str(i), partition_key=str(i))
+        try:
+            img = ast.literal_eval(read['blob_id'])[0]
+            img = get_img_url_with_container_sas_token(img)
+            output['img'] = img
+        except:
+            output['img'] = ''
+        name = read['title']
+        output['name'] = name
+        desc = read['desc']
+        output['desc'] = desc
+        output['id'] = i
+        rendering += [output]
+        print('img', img)
+
+   return render_template('home.html', recent=rendering)
+
+# using generate_container_sas
+def get_img_url_with_container_sas_token(blob_name):
+    container_sas_token = generate_container_sas(
+        account_name=blob_account,
+        container_name=blob_container,
+        account_key=blob_key,
+        permission=ContainerSasPermissions(read=True),
+        expiry=datetime.utcnow() + timedelta(hours=1)
+    )
+    blob_url_with_container_sas_token = f"https://{blob_account}.blob.core.windows.net/{blob_container}/{blob_name}?{container_sas_token}"
+    return blob_url_with_container_sas_token
+
+
+@app.route('/query_load', methods=['POST','GET'])
+def query_load():
+    print('query_load')
+    if request.method == "POST":
+        item = request.form.get('itm')
+        read = cos_container.read_item(str(item), partition_key=str(item))
+        files = ast.literal_eval(read['blob_id'])
+        # for file in files:
+        img1 = img2 = img3 = img4 = ''
+        try: 
+            img1 = get_img_url_with_container_sas_token(files[0])
+            img2 = get_img_url_with_container_sas_token(files[1])
+            img3 = get_img_url_with_container_sas_token(files[2])
+            img4 = get_img_url_with_container_sas_token(files[3])
+        except:
+            pass
+
+
+        return render_template("query_load.html", id=item,  img1=img1, img2 = img2, img3=img3, img4=img4)#, ButtonPressed=ButtonPressed)
+    return render_template("query_load.html", id = 'error')#, ButtonPressed = ButtonPressed)
+
 
 @app.route('/favicon.ico')
 def favicon():
     return send_from_directory(os.path.join(app.root_path, 'static'),
                                'favicon.ico', mimetype='image/vnd.microsoft.icon')
+global post_id
+post_id = 0
 
 @app.route('/hello', methods=['POST'])
 def hello():
-    name = request.form.get('name')
-    description = request.form.get('description') 
-    category = request.form.get('category') 
-    user_id = request.form.get('user_id')
-    if name:
-        res, udid, city = upload_geofence()
-        if res not in [200, 202]:
-           print("unable to create goefence")
-           return redirect(url_for('index'))
-        
-        print("geofence successful")
-
-        post_id = insert_container((name, description, city, udid, user_id, category))
-
-        return render_template('hello.html', name = user_id, comment = description)
-    else:
-       print('Request for hello page received with empty text -- redirecting')
+   name = request.form.get('name')
+   comment = request.form.get('freeform') 
+   session['name'] = name
+   print(comment)
+   if name and comment:
+       print('Request for hello page received with name=%s' % name)
+       global post_id
+       post_id = insert_container(name, comment)
+       return render_template('hello.html', name = name, comment = comment)
+   else:
+       print('Request for hello page received with no name or comment -- redirecting')
        return redirect(url_for('index'))
 
+@app.route('/item/<item_id>')
+def item(item_id):
+    read = cos_container.read_item(str(item_id), partition_key=str(item_id))
+    imgs = ast.literal_eval(read['blob_id'])
+    url_img = []
+    for img in imgs:
+        url_img += [get_img_url_with_container_sas_token(img)]
+    desc = read['desc']
+    name = read['title']
+    tags = read.get('tags')
+    if tags is not None:
+        tags = ast.literal_eval(tags)
+        tags = str(tags)
+
+    return render_template('item.html', itemname = name, desc = desc, pics_list = url_img, tags = tags)
 
 
 
-def insert_container(data):
-    name, description, city, udid, user_id, category = data
-    id = hashlib.md5(str(name + user_id).encode())
+def insert_container(title, desc,picture_id=''):
+    id = hashlib.md5(str(title).encode()).hexdigest()
+    id = 'item'+id
     cos_container.upsert_item({
-        'id':'item{0}'.format(id.hexdigest()),
-        'user_id' : str(user_id),
-        "item_name" : name,
-        "description" : description,
-        "fence_udid" : str(udid),
-        "city" : city,
-        "media_id" : "",
-        "category" : category
+        'id':'{0}'.format(id),
+        'test1' : 'test2',
+        'title' : '{0}'.format(str(title)),
+        'desc' : '{0}'.format(str(desc)),
+        'blob_id': '{0}'.format(str(picture_id))
+    })
+    return id
+
+def update_container_pic(item,picture_id=''):
+    print(str(item))
+    read = cos_container.read_item(str(item), partition_key=str(item))
+    cos_container.upsert_item({
+        'id':'{0}'.format(item),
+        'test1' : 'test',
+        'title' : '{0}'.format(read['title']),
+        'desc' : '{0}'.format(read['desc']),
+        'blob_id': '{0}'.format(str(picture_id))
+    })
+    return id
+
+def update_container_tags(item,tags=''):
+    # print(str(item))
+    read = cos_container.read_item(str(item), partition_key=str(item))
+    cos_container.upsert_item({
+        'id':'{0}'.format(item),
+        'test1' : 'test',
+        'title' : '{0}'.format(read['title']),
+        'desc' : '{0}'.format(read['desc']),
+        'blob_id': '{0}'.format(read['blob_id']),
+        'tags':'{0}'.format(str(tags))
     })
     return id
 
@@ -154,6 +286,45 @@ def get_post_by_id(post_id):
         enable_cross_partition_query=True
     ))
     return items
+    return id
+
+def read_recent():
+    return cos_container.read_item(('recent'), partition_key='recent')
+
+def update_recent(new_item):
+    try:
+        read = read_recent()
+        print('read')
+        last = int(read['last']) + 1 % 9
+        print('last')
+        recents = read['recents']
+        recents = ast.literal_eval(recents)
+        print('recents', recents)
+
+        print('list')
+        if len(recents) == 9:
+            recents[last] = new_item
+        else:
+            recents.append(new_item)
+        cos_container.upsert_item({
+        'id':'{0}'.format('recent'),
+        'last' : '{0}'.format(last),
+        'recents':'{0}'.format(recents) 
+    })
+        print('sucess')
+    except:
+        last = 0
+        recents = [new_item]
+        cos_container.upsert_item({
+        'id':'{0}'.format('recent'),
+        'last' : '{0}'.format(last),
+        'recents':'{0}'.format(recents) 
+    })
+        print('failed123')
+
+        
+
+
 
 blob_service_client = BlobServiceClient.from_connection_string(blob_connect_str)
 
@@ -163,26 +334,77 @@ def allowed_file(filename):
 
 @app.route('/upload',methods=['POST'])
 def upload():
+    global post_id
     print('post2')
     if request.method == 'POST':
         print('post1')
-        img = request.files['file']
-        print('hgello123')
-        if img and allowed_file(img.filename):
-            print('h23 d d')
-            filename = secure_filename(img.filename)
-            img.save(filename)
-            print('hello')
-            blob_client = blob_service_client.get_blob_client(container = blob_container, blob = filename)
-            with open(filename, "rb") as data:
-                try:
-                    blob_client.upload_blob(data, overwrite=True)
-                    msg = "Upload Done ! "
-                except:
-                    pass
-            os.remove(filename)
-    return render_template("index.html", msg=msg)
+        img = request.files.getlist('files[]')
+        if len(img) > 0:
+            file_names = []
+            tags = []
+            print('hgello123')
+            msg = 'Uploading'
+            for file in img:
+                print(file.filename)
+                if file and allowed_file(file.filename):
+                    id = hashlib.md5(str(file.filename).encode())
+                    blob_id = id.hexdigest()+'.'+file.filename.rsplit('.', 1)[1]
+                    blob_client = blob_service_client.get_blob_client(
+                        container=blob_container, blob=blob_id)
+                    filename = secure_filename(file.filename)
+                    file.save(filename)
+                    file_names.append(blob_id)
+                    with open(filename, "rb") as data:
+                        try:
+                            blob_client.upload_blob(data, overwrite=True)
+                            blob_client.set_blob_metadata({"filename":file.filename})
+                            img_url = get_img_url_with_container_sas_token(blob_id)
+                            # CV may need retry pattern
+                            result = cv_client.tag_image(img_url)
+                            i = 0
+                            for tag in result.tags:
+                                if i < 5:
+                                    tags += [tag.name]
+                                else:
+                                    break
+                                i += 1
+                            # blob_service.set_blob_metadata(container_name="mycontainer",
+                            #    blob_name="myblob",
+                            #    x_ms_meta_name_values={"Meta Century":"Nineteenth","Meta Author":"Mustafa"})
 
+
+                            # dictToSend = {'question':'what is the answer?'}
+                            # put_string = 'https://'+blob_account+'.blob.core.windows.net/'+blob_container+'/myblob?comp=tags'
+
+                            # res = requests.post('https: // myaccount.blob.core.windows.net/mycontainer/myblob?comp=tags
+                            #                     ', json=dictToSend)
+                            # print 'response from server:',res.text
+                        except:
+                            print('failed')
+                            pass
+                    
+
+                item_name = session.get('name')
+
+
+                msg = item_name + " has been uploaded to the server!"
+                os.remove(filename)
+            print(tags)
+            tags = {tag : tags.count(tag) for tag in tags}
+            update_container_pic(post_id, file_names)
+            update_container_tags(post_id, tags)
+            update_recent(post_id)
+            session["msg"] = msg
+
+            return redirect(url_for('index'))
+            # render_template("index.html", msg=msg)
+        else:
+            session["msg"] = 'No pics provided.'
+            return redirect(url_for('index'))
+            # render_template("index.html", msg='No pics provided.')
+    else:
+        session["msg"] ='Upload failed.'
+        return redirect(url_for('index'))
 
 @app.errorhandler(HTTPException)
 def handle_exception(e):
