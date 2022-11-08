@@ -67,7 +67,7 @@ def upload_geofence():
 
 def check_geofence(lat, lon, geofence_udid):
     check_geofence_url = 'https://atlas.microsoft.com/spatial/geofence/json'
-    print(geofence_udid)
+    # print(geofence_udid)
     params={
         'subscription-key': maps_key,
         'api-version': '1.0',
@@ -82,19 +82,19 @@ def check_geofence(lat, lon, geofence_udid):
 
     check_geofence_response = requests.get(check_geofence_url, params=params)
     response_json = check_geofence_response.json()
-    print()
-    print(response_json)
-    print('Event published:', response_json.get('isEventPublished'))
-    print('Distance to geofence:', response_json['geometries'][0]['distance'])
-    print('Nearest geofence location', response_json['geometries'][0]['nearestLon'], ',', response_json['geometries'][0]['nearestLat'])
-    print()
+    # print()
+    # print(response_json)
+    # print('Event published:', response_json.get('isEventPublished'))
+    # print('Distance to geofence:', response_json['geometries'][0]['distance'])
+    # print('Nearest geofence location', response_json['geometries'][0]['nearestLon'], ',', response_json['geometries'][0]['nearestLat'])
+    # print()
 
 
     if response_json['geometries'][0]['distance'] < 0:
-      print("Buyer is inside geofence")
+    #   print("Buyer is inside geofence")
       return True
     else:
-      print("buyer is outside geofence")
+    #   print("buyer is outside geofence")
       return False
 
 

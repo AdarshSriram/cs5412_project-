@@ -165,6 +165,7 @@ def hello():
             "city": city,
             "fence_udid" : udid
         }
+        print("geofence succesfful")
         post_id = insert_container(post)
 
        return render_template('hello.html', name = name, comment = comment)
@@ -209,12 +210,14 @@ def insert_container(post,picture_id=''):
     })
     return id
 
-def update_container_pic(item,picture_id=''):
+def update_container_pic(item, picture_id=''):
     print(str(item))
     read = cos_container.read_item(str(item), partition_key=str(item))
     cos_container.upsert_item({
         'id':'{0}'.format(item),
         'test1' : 'test',
+        'city' : read['city'],
+        "fence_udid": read['fence_udid'], 
         'title' : '{0}'.format(read['title']),
         'desc' : '{0}'.format(read['desc']),
         'blob_id': '{0}'.format(str(picture_id))
@@ -229,6 +232,8 @@ def update_container_tags(item,tags=''):
         'test1' : 'test',
         'title' : '{0}'.format(read['title']),
         'desc' : '{0}'.format(read['desc']),
+        'city' : read["city"],
+        'fence_udid' : read['fence_udid'],
         'blob_id': '{0}'.format(read['blob_id']),
         'tags':'{0}'.format(str(tags))
     })
@@ -253,6 +258,7 @@ def get_posts_by_city(city):
     ],
         enable_cross_partition_query=True
     ))
+    print(len(items))
     return items
 
 def get_posts_by_city_and_category(city, category):
@@ -278,10 +284,12 @@ def get_nearby_posts():
 
     candidate_posts =  []
 
-    if category == "":
-        candidate_posts = get_posts_by_city(city)
-    else:
-        candidate_posts = get_posts_by_city_and_category(city, category)
+    # if category == "":
+    #     candidate_posts = get_posts_by_city(city)
+    # else:
+    #     candidate_posts = get_posts_by_city_and_category(city, category)
+
+    candidate_posts = get_posts_by_city(city)
 
     res = {"nearby_posts" : []}
 
@@ -289,7 +297,7 @@ def get_nearby_posts():
         post = dict(post)
         if check_geofence(lat, lng, post.get("fence_udid")) :
             res["nearby_posts"].append(post)
-    print(res)
+    # print(res)
     return json.dumps(res)
 
 
