@@ -65,6 +65,9 @@ def index():
    print(msg)
    session['msg'] = ''
    session['name'] = ''
+   coords = geocoder.ip("me").latlng
+   session["lat"], session["lng"] = coords[0], coords[1]
+   session["city"] = geocoder.ip("me").city
    print('session message reset')
    return render_template('index.html', msg=msg)
 
@@ -275,9 +278,9 @@ def get_posts_by_city_and_category(city, category):
 
 @app.route('/nearby-posts',methods=['GET'])
 def get_nearby_posts():
-    coords = geocoder.ip("me").latlng
-    lat, lng = coords[0], coords[1]
-    city = geocoder.ip("me").city
+
+    lat, lng = session.get("lat"), session.get("lng")
+    city = session.get("city")
     
     category = request.args.get('category', type = str)
 
