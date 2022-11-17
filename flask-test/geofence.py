@@ -1,11 +1,17 @@
-import requests, json, os, time
-from dotenv import load_dotenv
-import geocoder
+import json
+from math import radians, sin, cos, sqrt, asin
+import os
+import time
 
+import geocoder
+import requests
+from dotenv import load_dotenv
 
 load_dotenv()
 
 maps_key = os.environ['MAPS_KEY']
+
+# lat1, lng1, lat2, lng2 = 42.4406, -76.4966, 
 
 
 def upload_geofence():
@@ -64,6 +70,18 @@ def upload_geofence():
     print()
 
     return response.status_code, geofence_udid, city
+
+def check_within_latlng_500(source_lat, source_lng, target_lat = 0, target_lng = 0):
+    Radius = 6371 #Radius of the earth to nearest km
+    lat1 = source_lat
+    lat2 = target_lat
+    lon1 = source_lng
+    lon2 = target_lng
+    dLat = radians(lat2 - lat1)
+    dLon = radians(lon2 - lon1)
+    a = sin(dLat / 2) * sin(dLat / 2) + cos(radians(lat1)) * cos(radians(lat2)) * sin(dLon / 2) * sin(dLon / 2)
+    c = 2 * asin(sqrt(a))
+    return Radius * c
 
 def check_geofence(lat, lon, geofence_udid):
     check_geofence_url = 'https://atlas.microsoft.com/spatial/geofence/json'
