@@ -15,7 +15,7 @@
         <h2 class="display-6 fw-bold" style="font-size:20px">{{location}}</h1>
         <a href="{{other_home_link}}">Link to: {{other_home}}</a>
         
-        <form action="{{url_for('home')}}">
+        <form action="{{url_for('home')}}" method="POST">
             <input name="search" type="search" placeholder="Search for an item">
             <button type="submit">Search</button>
         </form>

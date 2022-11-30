@@ -26,3 +26,10 @@ CV_KEY = 'b9e10182ec6d45aaab209c666aeb73cb'
 CV_ENDPOINT = 'https://projectvisionservice.cognitiveservices.azure.com/'
 
 MAPS_KEY = '9mDJ0lp_62SqmwhDvw3QkjjLcgF3NSru5P1m8j-7NLs'
+
+# Authenitcation with Google
+GOOGLE_CLIENT_ID = "1006873411191-4gd8m83dkokbsjgha2r0i0kbe3l2d94s.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "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"
+GOOGLE_DISCOVERY_URL = (
+    "https://accounts.google.com/.well-known/openid-configuration"
+)

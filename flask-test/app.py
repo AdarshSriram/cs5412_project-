@@ -2,22 +2,33 @@ from datetime import datetime, timedelta
 from azure.cosmos import CosmosClient
 from azure.storage.blob import BlobServiceClient,generate_container_sas, ContainerSasPermissions
 import hashlib
+import json
+import math
+import pathlib
+
 import os
 import requests
+import google.auth.transport.requests
+
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 import ast
 import uuid
 import time
+from flask_caching import Cache
+
 from azure.cognitiveservices.vision.computervision import ComputerVisionClient
 from azure.cognitiveservices.vision.computervision.models import OperationStatusCodes
 from azure.cognitiveservices.vision.computervision.models import VisualFeatureTypes
 from msrest.authentication import CognitiveServicesCredentials
-
-from flask import Flask, render_template, request, redirect, url_for, send_from_directory, json, session
-from geofence import upload_geofence, check_geofence
+from oauthlib.oauth2 import WebApplicationClient
+from pip._vendor import cachecontrol
+from flask import Flask, render_template, abort, jsonify, render_template, request, redirect, url_for, send_from_directory, json, session
+from geofence import upload_geofence, check_geofence, check_within_latlng_500
 import geocoder
 import json
+from google.oauth2 import id_token
+from google_auth_oauthlib.flow import Flow
 
 app = Flask(__name__)
 app.config.update(SECRET_KEY=uuid.uuid4().hex)
@@ -33,9 +44,9 @@ cos_uri = app.config['URI']
 
 client = CosmosClient(cos_uri, credential = cos_key)
 
-cos_DATABASE_NAME = 'Data'
+cos_DATABASE_NAME = 'SampleDB'
 cos_database = client.get_database_client(cos_DATABASE_NAME)
-cos_CONTAINER_NAME = 'PostData'
+cos_CONTAINER_NAME = 'SampleContainer'
 cos_container = cos_database.get_container_client(cos_CONTAINER_NAME)
 
 
@@ -55,8 +66,114 @@ cv_features = ["categories","brands","adult","color","objects"]
 cv_client = ComputerVisionClient(
     cv_endpoint, CognitiveServicesCredentials(cv_subscription_key))
 
+goog_client_id = app.config['GOOGLE_CLIENT_ID']
+goog_client_secret = app.config['GOOGLE_CLIENT_SECRET']
+goog_discovery_url = app.config['GOOGLE_DISCOVERY_URL']
 
-@app.route('/')
+
+
+
+
+cache = Cache(config={'CACHE_TYPE': 'SimpleCache'})
+cache.init_app(app)
+
+
+# flag if test db is partitioned on city/category
+is_city_partitioned = True
+
+USER_DB = {}
+
+
+# tmp
+# this is to set our environment to https because OAuth 2.0 only supports https environments
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+# set the path to where the .json file you got Google console is
+client_secrets_file = os.path.join(
+    pathlib.Path(__file__).parent, "client_secret.json")
+
+
+flow = Flow.from_client_secrets_file(  # Flow is OAuth 2.0 a class that stores all the information on how we want to authorize our users
+    client_secrets_file=client_secrets_file,
+    scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email",
+            "openid"],  # here we are specifing what do we get after the authorization
+    # and the redirect URI is the point where the user will end up after the authorization
+    redirect_uri="http://127.0.0.1:5000/callback"
+)
+
+
+# a function to check if the user is authorized or not
+def login_is_required(function):
+    def wrapper(*args, **kwargs):
+        if "google_id" not in session:  # authorization required
+            return abort(401)
+        else:
+            return function()
+
+    return wrapper
+
+
+@app.route("/login")  # the page where the user can login
+def login():
+    # asking the flow class for the authorization (login) url
+    authorization_url, state = flow.authorization_url()
+    session["state"] = state
+    return redirect(authorization_url)
+
+
+# this is the page that will handle the callback process meaning process after the authorization
+@app.route("/callback")
+def callback():
+    flow.fetch_token(authorization_response=request.url)
+
+    if not session["state"] == request.args["state"]:
+        abort(500)  # state does not match!
+
+    credentials = flow.credentials
+    request_session = requests.session()
+    cached_session = cachecontrol.CacheControl(request_session)
+    token_request = google.auth.transport.requests.Request(
+        session=cached_session)
+
+    id_info = id_token.verify_oauth2_token(
+        id_token=credentials._id_token,
+        request=token_request,
+        audience=goog_client_id
+    )
+
+    # defing the results to show on the page
+    session["google_id"] = id_info.get("sub")
+    session["name"] = id_info.get("name")
+
+    user_id = hashlib.md5(str(session["name"]).encode()).hexdigest()
+    USER_DB[user_id] = {"name": session["name"]}
+    session["CURR_USER"] = user_id
+
+    # the final page where the authorized users will end up
+    return redirect("/home")
+
+
+@app.route("/logout")  # the logout page and function
+def logout():
+    session.clear()
+    return redirect("/")
+
+
+@app.route("/")  # the home page where the login button will be located
+def f():
+    return " <a href='/login'><button>Login</button></a>"
+
+
+# the page where only the authorized users can go to
+@app.route("/protected_area")
+@login_is_required
+def protected_area():
+    # the logout button
+    return f"Hello {session['name']}! <br/> <a href='/logout'><button>Logout</button></a>"
+
+
+@app.route('/post')
+@cache.cached()
 def index():
     print('Request for index page received')
     client_ips = request.headers.get('X-Forwarded-For', request.remote_addr)

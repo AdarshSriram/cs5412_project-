@@ -1,5 +1,7 @@
 import requests, json, os, time
 # from dotenv import load_dotenv
+from math import radians, sin, cos, sqrt, asin
+
 import geocoder
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, json, session
 
@@ -69,6 +71,20 @@ def upload_geofence(coords, city):
     print()
 
     return response.status_code, geofence_udid, city
+
+
+def check_within_latlng_500(source_lat, source_lng, target_lat=0, target_lng=0):
+    Radius = 6371  # Radius of the earth to nearest km
+    lat1 = source_lat
+    lat2 = target_lat
+    lon1 = source_lng
+    lon2 = target_lng
+    dLat = radians(lat2 - lat1)
+    dLon = radians(lon2 - lon1)
+    a = sin(dLat / 2) * sin(dLat / 2) + cos(radians(lat1)) * \
+        cos(radians(lat2)) * sin(dLon / 2) * sin(dLon / 2)
+    c = 2 * asin(sqrt(a))
+    return Radius * c
 
 def check_geofence(lat, lon, geofence_udid):
     check_geofence_url = 'https://atlas.microsoft.com/spatial/geofence/json'
