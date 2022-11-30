@@ -33,9 +33,9 @@ cos_uri = app.config['URI']
 
 client = CosmosClient(cos_uri, credential = cos_key)
 
-cos_DATABASE_NAME = 'SampleDB'
+cos_DATABASE_NAME = 'Data'
 cos_database = client.get_database_client(cos_DATABASE_NAME)
-cos_CONTAINER_NAME = 'SampleContainer'
+cos_CONTAINER_NAME = 'PostData'
 cos_container = cos_database.get_container_client(cos_CONTAINER_NAME)
 
 
@@ -58,18 +58,29 @@ cv_client = ComputerVisionClient(
 
 @app.route('/')
 def index():
-   print('Request for index page received')
-   msg=session.get('msg')
-   if msg is None:
-    msg= ''
-   print(msg)
-   session['msg'] = ''
-   session['name'] = ''
-   coords = geocoder.ip("me").latlng
-   session["lat"], session["lng"] = coords[0], coords[1]
-   session["city"] = geocoder.ip("me").city
-   print('session message reset')
-   return render_template('index.html', msg=msg)
+    print('Request for index page received')
+    client_ips = request.headers.get('X-Forwarded-For', request.remote_addr)
+    print(request.headers)
+    print(client_ips)
+    print(request.remote_addr)
+    client_ips = client_ips.split(':')[0]
+    if client_ips is None or client_ips == '127.0.0.1':
+        print('is none')
+        client_ips = geocoder.ip('me').ip
+    # else:
+    #     client_ips = client_ips[0]
+    msg=session.get('msg')
+    if msg is None:
+        msg= '' 
+    print(msg)
+    session['msg'] = ''
+    session['name'] = ''
+    print("ip:", client_ips)
+    coords = geocoder.ip(str(client_ips)).latlng
+    session["lat"], session["lng"] = coords[0], coords[1]
+    session["city"] = geocoder.ip("me").city
+    print('session message reset')
+    return render_template('index.html', msg=msg)
 
 @app.route('/query')
 def query():
@@ -78,6 +89,57 @@ def query():
 
 @app.route('/home')
 def home():
+
+    client_ips = request.headers.get('X-Forwarded-For', request.remote_addr)
+    client_ips = client_ips.split(':')[0]
+
+    if client_ips is None or client_ips == '127.0.0.1':
+        print('is none')
+        client_ips = geocoder.ip('me').ip
+
+    print('Request for home page received')
+    coords = geocoder.ip(str(client_ips)).latlng
+    session["lat"], session["lng"] = coords[0], coords[1]
+    session["city"] = geocoder.ip(str(client_ips)).city
+    recent = read_recent()  # strcture = id=recent, last = last one, recents = values
+    print(recent)
+    recents = recent['recents']
+    recents = ast.literal_eval(recents)
+    print(recents)
+    print(recents[0])
+
+    last = int(recent['last'])-1
+    recents = recents[last:] + recents[:last]
+    rendering = []
+    location_string = 'Looking at items from: ' + str(session['city'])
+    for i in recents:
+        output = {}
+        print('i', i)
+        read = cos_container.read_item(str(i), partition_key=str(i))
+        try:
+            if read['city'] != session['city']:
+                continue
+            try:
+                img = ast.literal_eval(read['blob_id'])[0]
+                img = get_img_url_with_container_sas_token(img)
+                output['img'] = img
+            except:
+                output['img'] = ''
+            name = read['title']
+            output['name'] = name
+            desc = read['desc']
+            output['desc'] = desc
+            output['id'] = i
+            rendering += [output]
+        except:
+            continue
+            # print('img', img)
+
+    return render_template('home.html', recent=rendering, location = location_string, 
+        other_home = "All Recent Items", other_home_link = url_for('home_all'))
+
+@app.route('/home/all')
+def home_all():
    print('Request for home page received')
    recent = read_recent() # strcture = id=recent, last = last one, recents = values
    print(recent)
@@ -105,9 +167,9 @@ def home():
         output['desc'] = desc
         output['id'] = i
         rendering += [output]
-        print('img', img)
+        # print('img', img)
 
-   return render_template('home.html', recent=rendering)
+   return render_template('home.html', recent=rendering, other_home = "Local Items", other_home_link = url_for('home'))
 
 # using generate_container_sas
 def get_img_url_with_container_sas_token(blob_name):
@@ -160,7 +222,7 @@ def hello():
    if name and comment:
        print('Request for hello page received with name=%s' % name)
        global post_id
-       res, udid, city = upload_geofence()
+       res, udid, city = upload_geofence([session['lng'], session['lat']], session['city'])
        if res in [200, 202]:
         post = {
             "name" : name,
@@ -179,16 +241,22 @@ def hello():
 @app.route('/item/<item_id>')
 def item(item_id):
     read = cos_container.read_item(str(item_id), partition_key=str(item_id))
-    imgs = ast.literal_eval(read['blob_id'])
-    url_img = []
-    for img in imgs:
-        url_img += [get_img_url_with_container_sas_token(img)]
+    try:
+        imgs = ast.literal_eval(read['blob_id'])
+        url_img = []
+        for img in imgs:
+            url_img += [get_img_url_with_container_sas_token(img)]
+    except:
+        url_img = []
     desc = read['desc']
     name = read['title']
-    tags = read.get('tags')
-    if tags is not None:
-        tags = ast.literal_eval(tags)
-        tags = str(tags)
+    try:
+        tags = read.get('tags')
+        if tags is not None:
+            tags = ast.literal_eval(tags)
+            tags = str(tags)
+    except:
+        tags= ''
 
     return render_template('item.html', itemname = name, desc = desc, pics_list = url_img, tags = tags)
 
@@ -372,6 +440,7 @@ def upload():
             print('hgello123')
             msg = 'Uploading'
             for file in img:
+                metadata = {}
                 print(file.filename)
                 if file and allowed_file(file.filename):
                     id = hashlib.md5(str(file.filename).encode())
@@ -384,6 +453,7 @@ def upload():
                     with open(filename, "rb") as data:
                         try:
                             blob_client.upload_blob(data, overwrite=True)
+                            metadata['filename'] = file.filename
                             blob_client.set_blob_metadata({"filename":file.filename})
                             img_url = get_img_url_with_container_sas_token(blob_id)
                             # CV may need retry pattern
@@ -392,27 +462,16 @@ def upload():
                             for tag in result.tags:
                                 if i < 5:
                                     tags += [tag.name]
+                                    metadata['tag{0}'.format(i)] = tag.name
                                 else:
                                     break
                                 i += 1
-                            # blob_service.set_blob_metadata(container_name="mycontainer",
-                            #    blob_name="myblob",
-                            #    x_ms_meta_name_values={"Meta Century":"Nineteenth","Meta Author":"Mustafa"})
-
-
-                            # dictToSend = {'question':'what is the answer?'}
-                            # put_string = 'https://'+blob_account+'.blob.core.windows.net/'+blob_container+'/myblob?comp=tags'
-
-                            # res = requests.post('https: // myaccount.blob.core.windows.net/mycontainer/myblob?comp=tags
-                            #                     ', json=dictToSend)
-                            # print 'response from server:',res.text
                         except:
                             print('failed')
                             pass
-                    
-
+                    blob_client.set_blob_metadata(metadata)
+                    blob_client.set_blob_tags(metadata)
                 item_name = session.get('name')
-
 
                 msg = item_name + " has been uploaded to the server!"
                 os.remove(filename)

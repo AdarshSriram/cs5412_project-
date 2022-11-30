@@ -10,7 +10,7 @@ import os
 ACCOUNT_NAME = "mktplce-fence"
 ACCOUNT_KEY = "tx6lvkJ3qZ9JX87Jk2Z7kvSWpXxJPh8ZlfsrOnTbaSyMdq5VxeqNSPSVuerI98sigXXFvIPFEbRXKVSKQc8nlw=="
 CONNECTION_STRING = "AccountEndpoint=https://mktplce-fence.documents.azure.com:443/;AccountKey=tx6lvkJ3qZ9JX87Jk2Z7kvSWpXxJPh8ZlfsrOnTbaSyMdq5VxeqNSPSVuerI98sigXXFvIPFEbRXKVSKQc8nlw==;"
-CONTAINER = "SampleDB"
+CONTAINER = "Data"
 ALLOWED_EXTENSIONS = set(['txt', 'pdf', 'png', 'jpg', 'jpeg'])
 MAX_CONTENT_LENGTH = 20 * 1024 * 1024    # 20 Mb limit
 URI = "https://mktplce-fence.documents.azure.com:443/"
@@ -24,3 +24,5 @@ BLOB_MAX_CONTENT_LENGTH = 20 * 1024 * 1024    # 20 Mb limit
 
 CV_KEY = 'b9e10182ec6d45aaab209c666aeb73cb'
 CV_ENDPOINT = 'https://projectvisionservice.cognitiveservices.azure.com/'
+
+MAPS_KEY = '9mDJ0lp_62SqmwhDvw3QkjjLcgF3NSru5P1m8j-7NLs'
