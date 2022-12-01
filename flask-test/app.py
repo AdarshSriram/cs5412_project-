@@ -32,6 +32,9 @@ from google_auth_oauthlib.flow import Flow
 
 app = Flask(__name__)
 app.config.update(SECRET_KEY=uuid.uuid4().hex)
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=72)
+
+
 
 app.config.from_pyfile('config.py')
 cos_account = app.config['ACCOUNT_NAME']   # Azure account name
@@ -44,9 +47,9 @@ cos_uri = app.config['URI']
 
 client = CosmosClient(cos_uri, credential = cos_key)
 
-cos_DATABASE_NAME = 'SampleDB'
+cos_DATABASE_NAME = 'Data'
 cos_database = client.get_database_client(cos_DATABASE_NAME)
-cos_CONTAINER_NAME = 'SampleContainer'
+cos_CONTAINER_NAME = 'PostData'
 cos_container = cos_database.get_container_client(cos_CONTAINER_NAME)
 
 
@@ -122,6 +125,7 @@ def login():
 
 
 # this is the page that will handle the callback process meaning process after the authorization
+@cache.memoize(50)
 @app.route("/callback")
 def callback():
     flow.fetch_token(authorization_response=request.url)
@@ -161,6 +165,7 @@ def logout():
 
 @app.route("/")  # the home page where the login button will be located
 def f():
+    session.permanent = True
     return " <a href='/login'><button>Login</button></a>"
 
 
@@ -232,7 +237,7 @@ def home():
     for i in recents:
         output = {}
         print('i', i)
-        read = cos_container.read_item(str(i), partition_key=str(i))
+        read = cos_container.read_item(str(i), partition_key=session['city'])
         try:
             if read['city'] != session['city']:
                 continue
@@ -244,8 +249,8 @@ def home():
                 output['img'] = ''
             name = read['title']
             output['name'] = name
-            desc = read['desc']
-            output['desc'] = desc
+            desc = read['descr']
+            output['descr'] = desc
             output['id'] = i
             rendering += [output]
         except:
@@ -271,7 +276,7 @@ def home_all():
    for i in recents:
         output = {}
         print('i', i)
-        read = cos_container.read_item(str(i), partition_key=str(i))
+        read = get_posts_by_id(i)[0]
         try:
             img = ast.literal_eval(read['blob_id'])[0]
             img = get_img_url_with_container_sas_token(img)
@@ -280,13 +285,14 @@ def home_all():
             output['img'] = ''
         name = read['title']
         output['name'] = name
-        desc = read['desc']
-        output['desc'] = desc
+        desc = read['descr']
+        output['descr'] = desc
         output['id'] = i
         rendering += [output]
         # print('img', img)
 
    return render_template('home.html', recent=rendering, other_home = "Local Items", other_home_link = url_for('home'))
+
 
 # using generate_container_sas
 def get_img_url_with_container_sas_token(blob_name):
@@ -323,6 +329,40 @@ def query_load():
     return render_template("query_load.html", id = 'error')#, ButtonPressed = ButtonPressed)
 
 
+
+@app.route('/query_results', methods=['POST'])
+def query_results():
+    print('query_load')
+    # print(search_term)
+    # term = search_term
+
+    if request.method == "POST":
+        term = request.form.get('input')
+        items = get_posts_by_category(term)
+        print(items)
+        rendering = []
+        for i in items:
+                output = {}
+                print('i', i)
+                read = i
+                try:
+                    img = ast.literal_eval(read['blob_id'])[0]
+                    img = get_img_url_with_container_sas_token(img)
+                    output['img'] = img
+                except:
+                    output['img'] = ''
+                name = read['title']
+                output['name'] = name
+                desc = read['descr']
+                output['descr'] = desc
+                output['id'] = i['id']
+                rendering += [output]
+        
+
+
+        return render_template("query_results.html", query_key = term, recent = rendering) #, ButtonPressed=ButtonPressed)
+    return render_template("query_load.html", id = 'error')#, ButtonPressed = ButtonPressed)
+
 @app.route('/favicon.ico')
 def favicon():
     return send_from_directory(os.path.join(app.root_path, 'static'),
@@ -337,27 +377,34 @@ def hello():
    session['name'] = name
    print(comment)
    if name and comment:
-       print('Request for hello page received with name=%s' % name)
-       global post_id
-       res, udid, city = upload_geofence([session['lng'], session['lat']], session['city'])
-       if res in [200, 202]:
+        print('Request for hello page received with name=%s' % name)
+        global post_id
+    #    res, udid, city = upload_geofence([session['lng'], session['lat']], session['city'])
+    #    if res in [200, 202]:
+    #     post = {
+    #         "name" : name,
+    #         "comment":comment,
+    #         "city": city,
+    #         "fence_udid" : udid
+    #     }
         post = {
             "name" : name,
             "comment":comment,
-            "city": city,
-            "fence_udid" : udid
+            "city": session["city"],
+            "target_lat" : session["lat"],
+            "target_lng" : session["lng"]
         }
         print("geofence succesfful")
         post_id = insert_container(post)
 
-       return render_template('hello.html', name = name, comment = comment)
+        return render_template('hello.html', name = name, comment = comment)
    else:
-       print('Request for hello page received with no name or comment -- redirecting')
-       return redirect(url_for('index'))
+        print('Request for hello page received with no name or comment -- redirecting')
+        return redirect(url_for('index'))
 
 @app.route('/item/<item_id>')
 def item(item_id):
-    read = cos_container.read_item(str(item_id), partition_key=str(item_id))
+    read = get_posts_by_id(item_id)[0]
     try:
         imgs = ast.literal_eval(read['blob_id'])
         url_img = []
@@ -365,12 +412,12 @@ def item(item_id):
             url_img += [get_img_url_with_container_sas_token(img)]
     except:
         url_img = []
-    desc = read['desc']
+    desc = read['descr']
     name = read['title']
     try:
         tags = read.get('tags')
         if tags is not None:
-            tags = ast.literal_eval(tags)
+            # tags = ast.literal_eval(tags)
             tags = str(tags)
     except:
         tags= ''
@@ -383,47 +430,61 @@ def insert_container(post,picture_id=''):
     title = post["name"]
     desc = post["comment"]
     city = post["city"]
-    udid = post["fence_udid"]
+    # udid = post["fence_udid"]
 
+    user_id = session["CURR_USER"]
     id = hashlib.md5(str(title).encode()).hexdigest()
     id = 'item'+id
     cos_container.upsert_item({
         'id':'{0}'.format(id),
         'test1' : 'test2',
+        'user_id': user_id,
+
         'city' : city,
-        "fence_udid": udid, 
+        # "fence_udid": udid, 
+        "target_lat": post["target_lat"],
+        "target_lng": post["target_lng"],
         'title' : '{0}'.format(str(title)),
-        'desc' : '{0}'.format(str(desc)),
+        'descr' : '{0}'.format(str(desc)),
         'blob_id': '{0}'.format(str(picture_id))
     })
     return id
 
 def update_container_pic(item, picture_id=''):
     print(str(item))
-    read = cos_container.read_item(str(item), partition_key=str(item))
+    read = cos_container.read_item(str(item), partition_key=str(session["city"]))
     cos_container.upsert_item({
         'id':'{0}'.format(item),
         'test1' : 'test',
+        'user_id': read['user_id'],
+
         'city' : read['city'],
-        "fence_udid": read['fence_udid'], 
+        "target_lat": read["target_lat"],
+        "target_lng": read["target_lng"],
+        # "fence_udid": read['fence_udid'], 
         'title' : '{0}'.format(read['title']),
-        'desc' : '{0}'.format(read['desc']),
+        'descr' : '{0}'.format(read['descr']),
         'blob_id': '{0}'.format(str(picture_id))
     })
     return id
 
 def update_container_tags(item,tags=''):
     # print(str(item))
-    read = cos_container.read_item(str(item), partition_key=str(item))
+    read = cos_container.read_item(
+        str(item), partition_key=str(session["city"]))
     cos_container.upsert_item({
         'id':'{0}'.format(item),
         'test1' : 'test',
+        'user_id': read['user_id'],
+
         'title' : '{0}'.format(read['title']),
-        'desc' : '{0}'.format(read['desc']),
+        'descr' : '{0}'.format(read['descr']),
         'city' : read["city"],
-        'fence_udid' : read['fence_udid'],
+        "target_lat": read["target_lat"],
+        "target_lng" : read["target_lng"],
+        # 'fence_udid' : read['fence_udid'],
         'blob_id': '{0}'.format(read['blob_id']),
-        'tags':'{0}'.format(str(tags))
+        'tags': tags
     })
     return id
 
@@ -438,22 +499,47 @@ def get_posts_by_seller_id(seller_id):
     ))
     return items
 
+def get_posts_by_id(id):
+    items = list(cos_container.query_items(
+    query="SELECT * FROM r WHERE r.id=@id",
+    parameters=[
+        { "name":"@id", "value": id }
+    ],
+        enable_cross_partition_query=True
+    ))
+    return items
+
+
+
+@cache.memoize(50)
 def get_posts_by_city(city):
     items = list(cos_container.query_items(
     query="SELECT * FROM r WHERE r.city=@city",
     parameters=[
         { "name":"@city", "value": city }
     ],
-        enable_cross_partition_query=True
+        enable_cross_partition_query=is_city_partitioned
     ))
     print(len(items))
     return items
 
+@cache.memoize(50)
 def get_posts_by_city_and_category(city, category):
     items = list(cos_container.query_items(
-    query="SELECT * FROM r WHERE r.city=@city AND r.category=@category",
+        query="SELECT * FROM r WHERE r.city=@city AND (exists(select value t from t in r.tags where Contains(lower(t.tag), lower(@category))) OR Exists(select * from r.title where  Contains(lower(r.title), lower(@category))) OR Exists(select * from r.descr where  Contains(lower(r.descr), lower(@category))))",
     parameters=[
         { "name":"@city", "value": city },
+        { "name":"@category", "value": category },
+    ],
+        enable_cross_partition_query=is_city_partitioned
+    ))
+    return items
+
+@cache.memoize(50)
+def get_posts_by_category(category):
+    items = list(cos_container.query_items(
+        query="SELECT * FROM r WHERE exists(select value t from t in r.tags where Contains(lower(t.tag), lower(@category))) OR Exists(select * from r.title where  Contains(lower(r.title), lower(@category))) OR Exists(select * from r.descr where  Contains(lower(r.descr), lower(@category))) ",
+    parameters=[
         { "name":"@category", "value": category },
     ],
         enable_cross_partition_query=True
@@ -461,33 +547,73 @@ def get_posts_by_city_and_category(city, category):
     return items
 
 
-@app.route('/nearby-posts',methods=['GET'])
-def get_nearby_posts():
+def get_nearby_posts(src_lat, src_lng, city, category):
+    DIST_THRESH_IN_KM = 5
+    candidate_posts = []
 
-    lat, lng = session.get("lat"), session.get("lng")
-    city = session.get("city")
-    
-    category = request.args.get('category', type = str)
+    if category is None:
+        candidate_posts = get_posts_by_city(city)
+    else:
+        candidate_posts = get_posts_by_city_and_category(city, category)
 
+    res = {"closest": [], "further": []}
 
-    candidate_posts =  []
-
-    # if category == "":
-    #     candidate_posts = get_posts_by_city(city)
-    # else:
-    #     candidate_posts = get_posts_by_city_and_category(city, category)
-
-    candidate_posts = get_posts_by_city(city)
-
-    res = {"nearby_posts" : []}
+    print(f"Aaaaaaa:\n\n{candidate_posts}\n\n")
 
     for post in candidate_posts:
         post = dict(post)
-        if check_geofence(lat, lng, post.get("fence_udid")) :
-            res["nearby_posts"].append(post)
-    # print(res)
-    return json.dumps(res)
+        # if check_geofence(lat, lng, post.get("fence_udid")) :
+        target_lat, target_lng = post.get(
+            "target_lat", -1), post.get("target_lng", -1)
+        if target_lat != -1:
+            dist = check_within_latlng_500(
+                src_lat, src_lng, target_lat, target_lng)
+            if dist <= DIST_THRESH_IN_KM:
+                res["closest"].append((post, dist))
+            else:
+                res["further"].append((post, dist))
 
+    res["closest"].sort(key=lambda x: x[1])
+    res["further"].sort(key=lambda x: x[1])
+
+    cache.set("local-feed", res)
+
+    return res
+
+
+def near_cached_coords(src_lat, src_lng):
+    latest_lat, latest_lng = cache.get("latest_lat"), cache.get("latest_lng")
+    if latest_lat is None:
+        return False
+    if math.round(check_within_latlng_500(src_lat, src_lng, latest_lat, latest_lng)) <= 1:
+        return True
+
+
+@app.route('/local-feed', methods=['GET'])
+def get_local_feed():
+    category = request.args.get('category', None)
+    city = session.get("city", None)
+
+    if city is None:
+        city = geocoder.ip("me").city
+
+    if not session.get("lat"):
+        session["lat"], session["lng"] = geocoder.ip("me").latlng
+        src_lat, src_lng = session["lat"], session["lng"]
+    else:
+        src_lat, src_lng = session["lat"], session["lng"]
+
+    if near_cached_coords(src_lat, src_lng):
+        res = cache.get("local-feed")
+        if res:
+            return res
+
+    cache.set("latest_coords", (src_lat, src_lng))
+    cache.set("latest_city", city)
+
+    res = get_nearby_posts(src_lat, src_lng, city, category)
+
+    return jsonify(res)
 
 def get_post_by_id(post_id):
     items = list(cos_container.query_items(
@@ -497,11 +623,21 @@ def get_post_by_id(post_id):
     ],
         enable_cross_partition_query=True
     ))
-    return items
+    return items[0]
     return id
 
 def read_recent():
-    return cos_container.read_item(('recent'), partition_key='recent')
+    src_lat, src_lng = session.get("lat", -1), session.get("lng", -1)
+    if src_lat == -1:
+        src_lat, src_lng = geocoder.ip("me").latlng
+    if near_cached_coords(src_lat, src_lng):
+        res = cache.get("local_recent")
+        if res is not None:
+            return res
+    
+    res = cos_container.read_item(('recent'), partition_key='recent')
+    cache.set("local_recent", res)
+    return res
 
 def update_recent(new_item):
     try:
@@ -522,7 +658,7 @@ def update_recent(new_item):
         'id':'{0}'.format('recent'),
         'last' : '{0}'.format(last),
         'recents':'{0}'.format(recents) 
-    })
+    }) 
         print('sucess')
     except:
         last = 0
@@ -530,7 +666,8 @@ def update_recent(new_item):
         cos_container.upsert_item({
         'id':'{0}'.format('recent'),
         'last' : '{0}'.format(last),
-        'recents':'{0}'.format(recents) 
+        'recents':'{0}'.format(recents) ,
+        'city':'recent'
     })
         print('failed123')
 
@@ -593,7 +730,7 @@ def upload():
                 msg = item_name + " has been uploaded to the server!"
                 os.remove(filename)
             print(tags)
-            tags = {tag : tags.count(tag) for tag in tags}
+            tags = [{"tag" : tag} for tag in tags]
             update_container_pic(post_id, file_names)
             update_container_tags(post_id, tags)
             update_recent(post_id)
