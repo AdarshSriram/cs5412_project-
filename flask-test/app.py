@@ -11,12 +11,16 @@ import uuid
 from datetime import datetime, timedelta
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
 from websocket import create_connection
-
-
+from azure.cognitiveservices.vision.computervision import ComputerVisionClient
 import geocoder
 import google.auth.transport.requests
 import requests
-from azure.cognitiveservices.vision.computervision import ComputerVisionClient
+import google.auth.transport.requests
+from flask_caching import Cache
+from werkzeug.utils import secure_filename
+from werkzeug.exceptions import HTTPException
+import ast
+import uuid
 from azure.cognitiveservices.vision.computervision.models import (
     OperationStatusCodes, VisualFeatureTypes)
 from azure.cosmos import CosmosClient
@@ -32,11 +36,23 @@ from google_auth_oauthlib.flow import Flow
 from msrest.authentication import CognitiveServicesCredentials
 from oauthlib.oauth2 import WebApplicationClient
 from pip._vendor import cachecontrol
+from flask import Flask, render_template, abort, jsonify, render_template, request, redirect, url_for, send_from_directory, json, session
+from geofence import check_within_latlng_500
+import geocoder
+import json
+from google.oauth2 import id_token
+from google_auth_oauthlib.flow import Flow
+from word_forms.word_forms import get_word_forms
+from oauthlib.oauth2 import WebApplicationClient
+from pip._vendor import cachecontrol
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.config.update(SECRET_KEY=uuid.uuid4().hex)
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=72)
+
+
 
 app.config.from_pyfile('config.py')
 cos_account = app.config['ACCOUNT_NAME']   # Azure account name
@@ -49,9 +65,9 @@ cos_uri = app.config['URI']
 
 client = CosmosClient(cos_uri, credential = cos_key)
 
-cos_DATABASE_NAME = 'SampleDB'
+cos_DATABASE_NAME = 'Data'
 cos_database = client.get_database_client(cos_DATABASE_NAME)
-cos_CONTAINER_NAME = 'SampleContainer'
+cos_CONTAINER_NAME = 'PostData'
 cos_container = cos_database.get_container_client(cos_CONTAINER_NAME)
 
 
@@ -128,8 +144,8 @@ def login():
 def callback():
     flow.fetch_token(authorization_response=request.url)
 
-    if not session["state"] == request.args["state"]:
-        abort(500)  #state does not match!
+    # if not session["state"] == request.args["state"]:
+    #     abort(500)  #state does not match!
 
     credentials = flow.credentials
     request_session = requests.session()
@@ -234,17 +250,29 @@ def activate_notifs(category):
 @app.route('/post')
 @cache.cached()
 def index():
-   msg=session.get('msg')
-   if msg is None:
-    msg= ''
-   print(msg)
-   session['msg'] = ''
-   session['name'] = ''
-   coords = geocoder.ip("me").latlng
-   session["lat"], session["lng"] = coords[0], coords[1]
-   session["city"] = geocoder.ip("me").city
-   print('session message reset')
-   return render_template('index.html', msg=msg)
+    print('Request for index page received')
+    client_ips = request.headers.get('X-Forwarded-For', request.remote_addr)
+    print(request.headers)
+    print(client_ips)
+    print(request.remote_addr)
+    client_ips = client_ips.split(':')[0]
+    if client_ips is None or client_ips == '127.0.0.1':
+        print('is none')
+        client_ips = geocoder.ip('me').ip
+    # else:
+    #     client_ips = client_ips[0]
+    msg=session.get('msg')
+    if msg is None:
+        msg= '' 
+    print(msg)
+    session['msg'] = ''
+    session['name'] = ''
+    print("ip:", client_ips)
+    coords = geocoder.ip(str(client_ips)).latlng
+    session["lat"], session["lng"] = coords[0], coords[1]
+    session["city"] = geocoder.ip("me").city
+    print('session message reset')
+    return render_template('index.html', msg=msg)
 
 @app.route('/query')
 def query():
@@ -253,38 +281,91 @@ def query():
 
 @app.route('/home')
 def home():
-   coords = geocoder.ip('me').latlng
-   session["lat"], session['lon'] = coords[0], coords[1]
 
-    # Upsert curr user into GeoSVC
-   upsert_user_pos(session.get("CURR_USER", ""), session["lat"], session["lon"])
+    client_ips = request.headers.get('X-Forwarded-For', request.remote_addr)
+    client_ips = client_ips.split(':')[0]
 
+    if client_ips is None or client_ips == '127.0.0.1':
+        print('is none')
+        client_ips = geocoder.ip('me').ip
+
+    print('Request for home page received')
+    coords = geocoder.ip(str(client_ips)).latlng
+    session["lat"], session["lng"] = coords[0], coords[1]
+    session["city"] = geocoder.ip(str(client_ips)).city
+     # Upsert curr user into GeoSVC
+    upsert_user_pos(session.get("CURR_USER", ""), session["lat"], session["lng"])
+    recent = read_recent()  # strcture = id=recent, last = last one, recents = values
+    print(recent)
+    recents = recent['recents']
+    recents = ast.literal_eval(recents)
+    print(recents)
+    print(recents[0])
+
+    last = int(recent['last'])-1
+    recents = recents[last:] + recents[:last]
+    rendering = []
+    location_string = 'Looking at items from: ' + str(session['city'])
+    for i in recents:
+        output = {}
+        print('i', i)
+        read = cos_container.read_item(str(i), partition_key=session['city'])
+        try:
+            if read['city'] != session['city']:
+                continue
+            try:
+                img = ast.literal_eval(read['blob_id'])[0]
+                img = get_img_url_with_container_sas_token(img)
+                output['img'] = img
+            except:
+                output['img'] = ''
+            name = read['title']
+            output['name'] = name
+            desc = read['descr']
+            output['descr'] = desc
+            output['id'] = i
+            rendering += [output]
+        except:
+            continue
+            # print('img', img)
+
+    return render_template('home.html', recent=rendering, location = location_string, 
+        other_home = "All Recent Items", other_home_link = url_for('home_all'))
+
+@app.route('/home/all')
+def home_all():
    print('Request for home page received')
    rendering = []
    recent = read_recent() # strcture = id=recent, last = last one, recents = values
-#    recents = recent['recents']
-#    recents = ast.literal_eval(recents)
-#    last = int(recent['last'])-1
-#    recents = recents[last:] + recents[:last]
-#    for i in recents:
-#         output = {}
-#         print('i', i)
-#         read = cos_container.read_item(str(i), partition_key=str(i))
-#         try:
-#             img = ast.literal_eval(read['blob_id'])[0]
-#             img = get_img_url_with_container_sas_token(img)
-#             output['img'] = img
-#         except:
-#             output['img'] = ''
-#         name = read['title']
-#         output['name'] = name
-#         desc = read.get('desc', "")
-#         output['desc'] = desc
-#         output['id'] = i
-#         rendering += [output]
-#         print('img', img)
+   print(recent)
+   recents = recent['recents']
+   recents = ast.literal_eval(recents)
+   print(recents)
+   print(recents[0])
 
-   return render_template('home.html', recent=rendering)
+   last = int(recent['last'])-1
+   recents = recents[last:] + recents[:last]
+   rendering = []
+   for i in recents:
+        output = {}
+        print('i', i)
+        read = get_posts_by_id(i)[0]
+        try:
+            img = ast.literal_eval(read['blob_id'])[0]
+            img = get_img_url_with_container_sas_token(img)
+            output['img'] = img
+        except:
+            output['img'] = ''
+        name = read['title']
+        output['name'] = name
+        desc = read['descr']
+        output['descr'] = desc
+        output['id'] = i
+        rendering += [output]
+        # print('img', img)
+
+   return render_template('home.html', recent=rendering, other_home = "Local Items", other_home_link = url_for('home'))
+
 
 # using generate_container_sas
 def get_img_url_with_container_sas_token(blob_name):
@@ -321,6 +402,43 @@ def query_load():
     return render_template("query_load.html", id = 'error')#, ButtonPressed = ButtonPressed)
 
 
+
+@app.route('/query_results', methods=['POST'])
+def query_results():
+    print('query_load')
+    # print(search_term)
+    # term = search_term
+
+    if request.method == "POST":
+        term = request.form.get('input')
+        forms = get_word_forms(term)['n']
+        items = []
+        for f in forms:
+            items += get_posts_by_category(f)
+        print(items)
+        rendering = []
+        for i in items:
+                output = {}
+                print('i', i)
+                read = i
+                try:
+                    img = ast.literal_eval(read['blob_id'])[0]
+                    img = get_img_url_with_container_sas_token(img)
+                    output['img'] = img
+                except:
+                    output['img'] = ''
+                name = read['title']
+                output['name'] = name
+                desc = read['descr']
+                output['descr'] = desc
+                output['id'] = i['id']
+                rendering += [output]
+        
+
+
+        return render_template("query_results.html", query_key = term, recent = rendering) #, ButtonPressed=ButtonPressed)
+    return render_template("query_load.html", id = 'error')#, ButtonPressed = ButtonPressed)
+
 @app.route('/favicon.ico')
 def favicon():
     return send_from_directory(os.path.join(app.root_path, 'static'),
@@ -353,22 +471,28 @@ def hello():
 
        return render_template('hello.html', name = name, comment = comment)
    else:
-       print('Request for hello page received with no name or comment -- redirecting')
-       return redirect(url_for('index'))
+        print('Request for hello page received with no name or comment -- redirecting')
+        return redirect(url_for('index'))
 
 @app.route('/item/<item_id>')
 def item(item_id):
-    read = cos_container.read_item(str(item_id), partition_key=str(item_id))
-    imgs = ast.literal_eval(read['blob_id'])
-    url_img = []
-    for img in imgs:
-        url_img += [get_img_url_with_container_sas_token(img)]
-    desc = read.get('desc')
+    read = get_posts_by_id(item_id)[0]
+    try:
+        imgs = ast.literal_eval(read['blob_id'])
+        url_img = []
+        for img in imgs:
+            url_img += [get_img_url_with_container_sas_token(img)]
+    except:
+        url_img = []
+    desc = read['descr']
     name = read['title']
-    tags = read.get('tags')
-    if tags is not None:
-        tags = ast.literal_eval(tags)
-        tags = str(tags)
+    try:
+        tags = read.get('tags')
+        if tags is not None:
+            # tags = ast.literal_eval(tags)
+            tags = str(tags)
+    except:
+        tags= ''
 
     return render_template('item.html', itemname = name, desc = desc, pics_list = url_img, tags = tags)
 
@@ -381,53 +505,60 @@ def insert_container(post,picture_id=''):
     user_id = session["CURR_USER"]
     # udid = post["fence_udid"]
 
+    user_id = session["CURR_USER"]
     id = hashlib.md5(str(title).encode()).hexdigest()
     id = 'item'+id
     cos_container.upsert_item({
         'id':'{0}'.format(id),
         'user_id' : user_id,
         'test1' : 'test2',
+        'user_id': user_id,
+
         'city' : city,
         # "fence_udid": udid, 
         "target_lat": post["target_lat"],
-        "target_lng" : post["target_lng"],
+        "target_lng": post["target_lng"],
         'title' : '{0}'.format(str(title)),
-        'desc' : '{0}'.format(str(desc)),
+        'descr' : '{0}'.format(str(desc)),
         'blob_id': '{0}'.format(str(picture_id))
     })
     return id
 
 def update_container_pic(item, picture_id=''):
     print(str(item))
-    read = cos_container.read_item(str(item), partition_key=str(item))
+    read = cos_container.read_item(str(item), partition_key=str(session["city"]))
     cos_container.upsert_item({
         'id':'{0}'.format(item),
         'test1' : 'test',
-        'user_id' : read['user_id'],
+        'user_id': read['user_id'],
+
         'city' : read['city'],
         "target_lat": read["target_lat"],
-        "target_lng" : read["target_lng"],
+        "target_lng": read["target_lng"],
         # "fence_udid": read['fence_udid'], 
         'title' : '{0}'.format(read['title']),
-        'desc' : '{0}'.format(read.get('desc')),
+        'descr' : '{0}'.format(read['descr']),
         'blob_id': '{0}'.format(str(picture_id))
     })
     return id
 
 def update_container_tags(item,tags=''):
     # print(str(item))
-    read = cos_container.read_item(str(item), partition_key=str(item))
+    read = cos_container.read_item(
+        str(item), partition_key=str(session["city"]))
     cos_container.upsert_item({
         'id':'{0}'.format(item),
         'test1' : 'test',
-        'user_id' : read['user_id'],
+        'user_id': read['user_id'],
+
         'title' : '{0}'.format(read['title']),
-        'desc' : '{0}'.format(read.get('desc')),
+        'descr' : '{0}'.format(read['descr']),
         'city' : read["city"],
         "target_lat": read["target_lat"],
         "target_lng" : read["target_lng"],
+        # 'fence_udid' : read['fence_udid'],
         'blob_id': '{0}'.format(read['blob_id']),
-        'tags':'{0}'.format(str(tags))
+        'tags': tags
     })
     return id
 
@@ -441,6 +572,18 @@ def get_posts_by_seller_id(seller_id):
         enable_cross_partition_query=True
     ))
     return items
+
+def get_posts_by_id(id):
+    items = list(cos_container.query_items(
+    query="SELECT * FROM r WHERE r.id=@id",
+    parameters=[
+        { "name":"@id", "value": id }
+    ],
+        enable_cross_partition_query=True
+    ))
+    return items
+
+
 
 @cache.memoize(50)
 def get_posts_by_city(city):
@@ -457,12 +600,23 @@ def get_posts_by_city(city):
 @cache.memoize(50)
 def get_posts_by_city_and_category(city, category):
     items = list(cos_container.query_items(
-    query="SELECT * FROM r WHERE r.city=@city AND r.category=@category",
+        query="SELECT * FROM r WHERE r.city=@city AND (exists(select value t from t in r.tags where Contains(lower(t.tag), lower(@category))) OR Exists(select * from r.title where  Contains(lower(r.title), lower(@category))) OR Exists(select * from r.descr where  Contains(lower(r.descr), lower(@category))))",
     parameters=[
         { "name":"@city", "value": city },
         { "name":"@category", "value": category },
     ],
         enable_cross_partition_query=is_city_partitioned
+    ))
+    return items
+
+@cache.memoize(50)
+def get_posts_by_category(category):
+    items = list(cos_container.query_items(
+        query="SELECT * FROM r WHERE exists(select value t from t in r.tags where Contains(lower(t.tag), lower(@category))) OR Exists(select * from r.title where  Contains(lower(r.title), lower(@category))) OR Exists(select * from r.descr where  Contains(lower(r.descr), lower(@category))) ",
+    parameters=[
+        { "name":"@category", "value": category },
+    ],
+        enable_cross_partition_query=True
     ))
     return items
 
@@ -477,8 +631,6 @@ def get_nearby_posts(src_lat, src_lng, city, category):
             candidate_posts = get_posts_by_city_and_category(city, category)
 
         res = {"closest":[], "further":[]}
-
-        print(f"Aaaaaaa:\n\n{candidate_posts}\n\n")
 
         for post in candidate_posts:
             post = dict(post)
@@ -571,7 +723,6 @@ def read_recent():
     cache.set("local_recent", res)
     return res
 
-
 def update_recent(new_item):
     try:
         read = read_recent()
@@ -591,7 +742,7 @@ def update_recent(new_item):
         'id':'{0}'.format('recent'),
         'last' : '{0}'.format(last),
         'recents':'{0}'.format(recents) 
-    })
+    }) 
         print('sucess')
     except:
         last = 0
@@ -599,7 +750,8 @@ def update_recent(new_item):
         cos_container.upsert_item({
         'id':'{0}'.format('recent'),
         'last' : '{0}'.format(last),
-        'recents':'{0}'.format(recents) 
+        'recents':'{0}'.format(recents) ,
+        'city':'recent'
     })
         print('failed123')
 
@@ -626,6 +778,7 @@ def upload():
             print('hgello123')
             msg = 'Uploading'
             for file in img:
+                metadata = {}
                 print(file.filename)
                 if file and allowed_file(file.filename):
                     id = hashlib.md5(str(file.filename).encode())
@@ -638,6 +791,7 @@ def upload():
                     with open(filename, "rb") as data:
                         try:
                             blob_client.upload_blob(data, overwrite=True)
+                            metadata['filename'] = file.filename
                             blob_client.set_blob_metadata({"filename":file.filename})
                             img_url = get_img_url_with_container_sas_token(blob_id)
                             # CV may need retry pattern
@@ -646,32 +800,21 @@ def upload():
                             for tag in result.tags:
                                 if i < 5:
                                     tags += [tag.name]
+                                    metadata['tag{0}'.format(i)] = tag.name
                                 else:
                                     break
                                 i += 1
-                            # blob_service.set_blob_metadata(container_name="mycontainer",
-                            #    blob_name="myblob",
-                            #    x_ms_meta_name_values={"Meta Century":"Nineteenth","Meta Author":"Mustafa"})
-
-
-                            # dictToSend = {'question':'what is the answer?'}
-                            # put_string = 'https://'+blob_account+'.blob.core.windows.net/'+blob_container+'/myblob?comp=tags'
-
-                            # res = requests.post('https: // myaccount.blob.core.windows.net/mycontainer/myblob?comp=tags
-                            #                     ', json=dictToSend)
-                            # print 'response from server:',res.text
                         except:
                             print('failed')
                             pass
-                    
-
+                    blob_client.set_blob_metadata(metadata)
+                    blob_client.set_blob_tags(metadata)
                 item_name = session.get('name')
-
 
                 msg = item_name + " has been uploaded to the server!"
                 os.remove(filename)
             print(tags)
-            tags = {tag : tags.count(tag) for tag in tags}
+            tags = [{"tag" : tag} for tag in tags]
             update_container_pic(post_id, file_names)
             update_container_tags(post_id, tags)
             update_recent(post_id)

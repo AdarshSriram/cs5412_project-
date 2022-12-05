@@ -7,22 +7,26 @@ import geocoder
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()
+# load_dotenv()
+# app = Flask(__name__)
 
-maps_key = os.environ['MAPS_KEY']
+# app.config.from_pyfile('config.py')
+
+maps_key = ""
+
 
 # lat1, lng1, lat2, lng2 = 42.4406, -76.4966, 
 
 
-def upload_geofence():
-    coords = geocoder.ip("me").latlng
-# change from lat, lng to lng, lat
-    coords = [coords[1], coords[0]]
-    city = geocoder.ip("me").city
+def upload_geofence(coords, city):
+#     coords = geocoder.ip("me").latlng
+# # change from lat, lng to lng, lat
+#     coords = [coords[1], coords[0]]
+#     city = geocoder.ip("me").city
 
-    print(f"Curr Lng : {coords[1]} ,  Curr Lat : {coords[0]}")
-    print(f'City: {city}')
-    print()
+#     print(f"Curr Lng : {coords[1]} ,  Curr Lat : {coords[0]}")
+#     print(f'City: {city}')
+#     print()
 
     geofence_upload_url = 'https://atlas.microsoft.com/mapData/upload'
     params={

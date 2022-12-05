@@ -11,18 +11,14 @@
 <body>
     <main>
         <div class="px-4 py-3 my-2 text-center">
-        <h1 class="display-6 fw-bold text-primary">Welcome to the marketplace!</h1>
-        <h2 class="display-6 fw-bold" style="font-size:20px">{{location}}</h1>
-        <a href="{{other_home_link}}">Link to: {{other_home}}</a>
-    <div style="display: flex; justify-content: center;">
-
-        <form action="{{url_for('query_results')}}" method="POST">
+        <h1 class="display-6 fw-bold text-primary">Query Results</h1>
+        <h2 class="display-6 fw-bold" style="font-size:20px">{{query_key}}</h1>
+        <!-- <a href="{{other_home_link}}">Link to: {{other_home}}</a> -->
+        
+        <form action="{{url_for('query_results', search_term = input)}}" method="POST">
             <input name="input" type="search" placeholder="Search for an item">
-
             <button type="submit">Search</button>
         </form>
-        </div>
-
 
         </div>
         {% for dict in recent | batch (3)  %}
@@ -33,7 +29,7 @@
                 <div style="display:flex; justify-content: center; align-items: center; max-height: 90%;">
                 <img style="max-width: 100%; height: auto" src="{{value["img"]}}"/>
                 </div>
-                <p style="font-size: 12px">{{ value["descr"] }}</p>
+                <p style="font-size: 12px">{{ value["desc"] }}</p>
                 <a style="font-size: 14px;" href="{{url_for('item', item_id = value["id"])}}">Link to Item Page</a>
 
             </div>
