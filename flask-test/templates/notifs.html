@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+ 
+<html lang="en">
+ 
+<head>
+ 
+    <meta charset="UTF-8">
+ 
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+ 
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ 
+    <title>Notifications</title>
+ 
+</head>
+ 
+<body>
+
+     <h1>Realtime Notifications</h1>
+
+    <div id="log"></div>
+ 
+</body>
+{% block content %} 
+<script>
+    const user_id = '{{user_id}}'
+    const radius = '{{radius}}'
+    const hostip = '{{hostip}}'
+    const lat = '{{lat}}'
+    const lng = '{{lng}}'
+    const url = 'ws://'+hostip+':9851/NEARBY+users+Match+'+user_id+'+FENCE+ROAM+posts+*+'+radius
+    const socket = new WebSocket(url);
+
+    socket.addEventListener('open', function (event) {
+        console.log("Listening for notifs")
+ 
+        document.getElementById('log').innerHTML += `<span style="color: red">Started Listening</span><br>`;
+
+        // fetch('http://'+hostip+':9851/set+users+'+user_id+'+point+'+lat+'+'+lng)
+        // .then((data) => console.log("Updated user pos"))
+
+});
+ 
+socket.addEventListener('message', function (event) {
+    console.log("Got notif")
+    document.getElementById('log').innerHTML += `<span style="color: red">${event.data}</span><br>`
+ 
+});
+ 
+ 
+ 
+socket.addEventListener('message', function (event) {
+ 
+    console.log(event.data);
+ 
+});
+ 
+</script>
+{% endblock %}
+
+ 
+</html>

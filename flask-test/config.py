@@ -32,3 +32,12 @@ GOOGLE_CLIENT_SECRET = "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"
 GOOGLE_DISCOVERY_URL = (
     "https://accounts.google.com/.well-known/openid-configuration"
 )
+
+REDIS_PASSWD = "PufNGfIGmel6V8NYtm1hjbSU4foQgBSh"
+
+leaderip = "20.85.191.185"
+followerip = '40.88.200.96'
+
+leaderip_dev = 'localhost'
+
+AZURE_SERVICE_BUS_CONN_STR = "Endpoint=sb://tile38hook.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=n650y/dpF6q97XftWNzwmGvPcOTt/bynlWNpmFpItMo="

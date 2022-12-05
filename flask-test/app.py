@@ -1,13 +1,17 @@
 import ast
 import hashlib
 import json
+from geofence_v2 import *
+import redis
 import math
 #app.py
 import os
 import pathlib
-import time
 import uuid
 from datetime import datetime, timedelta
+from azure.servicebus import ServiceBusClient, ServiceBusMessage
+from websocket import create_connection
+
 
 import geocoder
 import google.auth.transport.requests
@@ -18,7 +22,7 @@ from azure.cognitiveservices.vision.computervision.models import (
 from azure.cosmos import CosmosClient
 from azure.storage.blob import (BlobServiceClient, ContainerSasPermissions,
                                 generate_container_sas)
-from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_DISCOVERY_URL
+from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_DISCOVERY_URL, leaderip, followerip, AZURE_SERVICE_BUS_CONN_STR
 from flask import (Flask, abort, json, jsonify, redirect, render_template,
                    request, send_from_directory, session, url_for)
 from flask_caching import Cache
@@ -67,15 +71,29 @@ cv_features = ["categories","brands","adult","color","objects"]
 cv_client = ComputerVisionClient(
     cv_endpoint, CognitiveServicesCredentials(cv_subscription_key))
 
-
+# FLASK CACHE INIT
 cache = Cache(config={'CACHE_TYPE': 'SimpleCache'})
 cache.init_app(app)
 
+useGeofenceV1 = False
+
+servicebus_client = ServiceBusClient.from_connection_string(conn_str=AZURE_SERVICE_BUS_CONN_STR, logging_enable=True)
+# 
+# session.clear()
 
 # flag if test db is partitioned on city/category
 is_city_partitioned = True
 
 USER_DB = {}
+
+leader = redis.Redis(host=leaderip, port=9851)
+follower = redis.Redis(host=followerip, port=9851)
+dev_client = redis.Redis(host="localhost", port=9851)
+
+NEARBY_POSTS_WS = None
+
+NOTIF_BATCH_SIZE = 2
+TOTAL_NOTIF_MAX = 2
 
 
 # tmp
@@ -88,8 +106,6 @@ flow = Flow.from_client_secrets_file(  #Flow is OAuth 2.0 a class that stores al
     scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email", "openid"],  #here we are specifing what do we get after the authorization
     redirect_uri="http://127.0.0.1:5000/callback"  #and the redirect URI is the point where the user will end up after the authorization
 )
-
-
 
 def login_is_required(function):  #a function to check if the user is authorized or not
     def wrapper(*args, **kwargs):
@@ -153,7 +169,67 @@ def f():
 def protected_area():
     return f"Hello {session['name']}! <br/> <a href='/logout'><button>Logout</button></a>"  #the logout button 
 
+# Listen to nearby posts for 
+def activate_nearby_ws(user_id, radius_in_m=1000):
+    try:
+        ws = create_connection(f"ws://{leaderip}:9851/NEARBY+users+Match+{user_id}+FENCE+ROAM+posts+*+{radius_in_m}")
+        print("\nSTARTED LISTENING")
+        return ws
+    except Exception as e:
+        print(e)
+        return None
 
+@app.route('/notifs/<radius>')
+def notifs(radius): 
+    [lat, lng] = geocoder.ip('me').latlng
+    user_id = session["CURR_USER"]
+    radius_in_m = 1000
+    return render_template("notifs.html", user_id=user_id, radius = radius_in_m, hostip=leaderip, lat = lat, lng = lng)
+
+@app.route('/activate_notifs/<category>')
+def activate_notifs(category):
+    category = str(category)
+    NEARBY_POSTS_WS = activate_nearby_ws(session["CURR_USER"])
+    if NEARBY_POSTS_WS is None:
+        return redirect("/post")
+    notif_count = 0
+    notif_batch = []
+    upsert_user_pos(session['CURR_USER'], session['lat'], session['lon'])
+    with servicebus_client:
+        city = session.get("city", geocoder.ip('me').city)
+        sender = servicebus_client.get_topic_sender(topic_name=f"{category}")
+        with sender:
+            notif_batch = []
+            batch_message = sender.create_message_batch()
+            while True:
+                data = NEARBY_POSTS_WS.recv()
+                data = process_ws_res(data, category)
+                if data is None:
+                    continue
+                else:
+                    # found nearby post in with <category>
+                    notif_batch.append(data) 
+                    try:
+                        batch_message.add_message(ServiceBusMessage(json.dumps(data)))
+                    except ValueError as v:
+                        print(v)
+                        batch_message = sender.create_message_batch()
+           
+                    notif_count += 1
+                    # if notif_count % NOTIF_BATCH_SIZE:
+                        # session[f"{category}_post_objs"] = notif_batch
+                        # sender.send_messages(batch_message)
+                        # notif_batch = []
+                    
+                    if notif_count == TOTAL_NOTIF_MAX:
+                        sender.send_messages(batch_message)
+                        break
+    
+    servicebus_client.close()
+    return redirect('/post')
+
+
+    
 
 @app.route('/post')
 @cache.cached()
@@ -177,34 +253,36 @@ def query():
 
 @app.route('/home')
 def home():
-   print('Request for home page received')
-   recent = read_recent() # strcture = id=recent, last = last one, recents = values
-   print(recent)
-   recents = recent['recents']
-   recents = ast.literal_eval(recents)
-   print(recents)
-   print(recents[0])
+   coords = geocoder.ip('me').latlng
+   session["lat"], session['lon'] = coords[0], coords[1]
 
-   last = int(recent['last'])-1
-   recents = recents[last:] + recents[:last]
+    # Upsert curr user into GeoSVC
+   upsert_user_pos(session.get("CURR_USER", ""), session["lat"], session["lon"])
+
+   print('Request for home page received')
    rendering = []
-   for i in recents:
-        output = {}
-        print('i', i)
-        read = cos_container.read_item(str(i), partition_key=str(i))
-        try:
-            img = ast.literal_eval(read['blob_id'])[0]
-            img = get_img_url_with_container_sas_token(img)
-            output['img'] = img
-        except:
-            output['img'] = ''
-        name = read['title']
-        output['name'] = name
-        desc = read['desc']
-        output['desc'] = desc
-        output['id'] = i
-        rendering += [output]
-        print('img', img)
+   recent = read_recent() # strcture = id=recent, last = last one, recents = values
+#    recents = recent['recents']
+#    recents = ast.literal_eval(recents)
+#    last = int(recent['last'])-1
+#    recents = recents[last:] + recents[:last]
+#    for i in recents:
+#         output = {}
+#         print('i', i)
+#         read = cos_container.read_item(str(i), partition_key=str(i))
+#         try:
+#             img = ast.literal_eval(read['blob_id'])[0]
+#             img = get_img_url_with_container_sas_token(img)
+#             output['img'] = img
+#         except:
+#             output['img'] = ''
+#         name = read['title']
+#         output['name'] = name
+#         desc = read.get('desc', "")
+#         output['desc'] = desc
+#         output['id'] = i
+#         rendering += [output]
+#         print('img', img)
 
    return render_template('home.html', recent=rendering)
 
@@ -260,24 +338,18 @@ def hello():
    if name and comment:
        print('Request for hello page received with name=%s' % name)
        global post_id
-    #    res, udid, city = upload_geofence()
-
-    #    if res in [200, 202]:
-    #     post = {
-    #         "name" : name,
-    #         "comment":comment,
-    #         "city": city,
-    #         "fence_udid" : udid
-    #     }
-    #     print("geofence succesfful")
        post = {
             "name" : name,
             "comment":comment,
             "city": session["city"],
             "target_lat" : session["lat"],
-            "target_lng" : session["lng"]
+            "target_lng" : session["lng"],
+            "user_id" : session.get("CURR_USER")
         }
        post_id = insert_container(post)
+
+        # Upsert into GeoSVC
+       upsert_post(post_id, session["lat"], session["lon"])
 
        return render_template('hello.html', name = name, comment = comment)
    else:
@@ -291,7 +363,7 @@ def item(item_id):
     url_img = []
     for img in imgs:
         url_img += [get_img_url_with_container_sas_token(img)]
-    desc = read['desc']
+    desc = read.get('desc')
     name = read['title']
     tags = read.get('tags')
     if tags is not None:
@@ -337,7 +409,7 @@ def update_container_pic(item, picture_id=''):
         "target_lng" : read["target_lng"],
         # "fence_udid": read['fence_udid'], 
         'title' : '{0}'.format(read['title']),
-        'desc' : '{0}'.format(read['desc']),
+        'desc' : '{0}'.format(read.get('desc')),
         'blob_id': '{0}'.format(str(picture_id))
     })
     return id
@@ -350,11 +422,10 @@ def update_container_tags(item,tags=''):
         'test1' : 'test',
         'user_id' : read['user_id'],
         'title' : '{0}'.format(read['title']),
-        'desc' : '{0}'.format(read['desc']),
+        'desc' : '{0}'.format(read.get('desc')),
         'city' : read["city"],
         "target_lat": read["target_lat"],
         "target_lng" : read["target_lng"],
-        # 'fence_udid' : read['fence_udid'],
         'blob_id': '{0}'.format(read['blob_id']),
         'tags':'{0}'.format(str(tags))
     })
@@ -397,36 +468,48 @@ def get_posts_by_city_and_category(city, category):
 
 
 def get_nearby_posts(src_lat, src_lng, city, category):
-    DIST_THRESH_IN_KM = 5
-    candidate_posts =  []
+    if useGeofenceV1:
+        DIST_THRESH_IN_KM = 5
+        candidate_posts =  []
+        if category is None:
+            candidate_posts = get_posts_by_city(city)
+        else:
+            candidate_posts = get_posts_by_city_and_category(city, category)
 
-    if category is None:
-        candidate_posts = get_posts_by_city(city)
+        res = {"closest":[], "further":[]}
+
+        print(f"Aaaaaaa:\n\n{candidate_posts}\n\n")
+
+        for post in candidate_posts:
+            post = dict(post)
+            # if check_geofence(lat, lng, post.get("fence_udid")) :
+            target_lat, target_lng = post.get("target_lat", -1), post.get("target_lng", -1)
+            if target_lat != -1:
+                dist = check_within_latlng_500(src_lat, src_lng, target_lat, target_lng)
+                if dist <= DIST_THRESH_IN_KM:
+                    res["closest"].append((post, dist))
+                else:
+                    res["further"].append((post, dist))
+            
+
+        res["closest"].sort(key = lambda x : x[1])
+        res["further"].sort(key = lambda x : x[1])
+
+        cache.set("local-feed",res)
+    
     else:
-        candidate_posts = get_posts_by_city_and_category(city, category)
+        ids = nearby_posts(src_lat, src_lng, 500, category = "")
+        print(ids)
+        items = list(cos_container.query_items(
+            query=f"SELECT * FROM r WHERE ARRAY_CONTAINS(@ids, r.id)",
+            parameters=[
+                { "name":"@ids", "value": ids }
+                        ],
+            enable_cross_partition_query=is_city_partitioned
+            ))
 
-    res = {"closest":[], "further":[]}
 
-    print(f"Aaaaaaa:\n\n{candidate_posts}\n\n")
-
-    for post in candidate_posts:
-        post = dict(post)
-        # if check_geofence(lat, lng, post.get("fence_udid")) :
-        target_lat, target_lng = post.get("target_lat", -1), post.get("target_lng", -1)
-        if target_lat != -1:
-            dist = check_within_latlng_500(src_lat, src_lng, target_lat, target_lng)
-            if dist <= DIST_THRESH_IN_KM:
-                res["closest"].append((post, dist))
-            else:
-                res["further"].append((post, dist))
-        
-
-    res["closest"].sort(key = lambda x : x[1])
-    res["further"].sort(key = lambda x : x[1])
-
-    cache.set("local-feed",res)
-
-    return res
+    return items
 
 
 def near_cached_coords(src_lat, src_lng):
@@ -436,7 +519,7 @@ def near_cached_coords(src_lat, src_lng):
     if math.round(check_within_latlng_500(src_lat, src_lng, latest_lat, latest_lng)) <= 1:
         return True
 
-
+@login_is_required
 @app.route('/local-feed',methods=['GET'])
 def get_local_feed():
     category = request.args.get('category', None)
@@ -620,4 +703,6 @@ def handle_exception(e):
 
 
 if __name__ == '__main__':
-   app.run()
+    app.run(host="0.0.0.0")
+    leader.close()
+    follower.close()
