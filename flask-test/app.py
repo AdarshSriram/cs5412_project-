@@ -29,6 +29,7 @@ import geocoder
 import json
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
+from word_forms.word_forms import get_word_forms
 
 app = Flask(__name__)
 app.config.update(SECRET_KEY=uuid.uuid4().hex)
@@ -101,7 +102,9 @@ flow = Flow.from_client_secrets_file(  # Flow is OAuth 2.0 a class that stores a
     scopes=["https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email",
             "openid"],  # here we are specifing what do we get after the authorization
     # and the redirect URI is the point where the user will end up after the authorization
+    # redirect_uri="https://locationmarketplacedev.azurewebsites.net/callback"
     redirect_uri="http://127.0.0.1:5000/callback"
+
 )
 
 
@@ -338,7 +341,10 @@ def query_results():
 
     if request.method == "POST":
         term = request.form.get('input')
-        items = get_posts_by_category(term)
+        forms = get_word_forms(term)['n']
+        items = []
+        for f in forms:
+            items += get_posts_by_category(f)
         print(items)
         rendering = []
         for i in items:

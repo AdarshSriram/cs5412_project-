@@ -10,3 +10,9 @@ werkzeug
 azure-cognitiveservices-vision-computervision
 pillow
 geocoder
+Flask-Caching
+google-auth   
+google-auth-oauthlib                      
+oauthlib
+msrest
+word_forms
