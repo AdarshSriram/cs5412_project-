@@ -9,6 +9,7 @@ shell = "*"
 requests = "*"
 python-dotenv = "*"
 geocoder = "*"
+reverse_geocode = "*"
 
 [dev-packages]
 

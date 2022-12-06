@@ -8,6 +8,8 @@ import math
 import os
 import pathlib
 import uuid
+import nltk
+import logging
 from datetime import datetime, timedelta
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
 from websocket import create_connection
@@ -27,8 +29,6 @@ from azure.cosmos import CosmosClient
 from azure.storage.blob import (BlobServiceClient, ContainerSasPermissions,
                                 generate_container_sas)
 from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_DISCOVERY_URL, leaderip, followerip, AZURE_SERVICE_BUS_CONN_STR
-from flask import (Flask, abort, json, jsonify, redirect, render_template,
-                   request, send_from_directory, session, url_for)
 from flask_caching import Cache
 from geofence import check_within_latlng_500
 from google.oauth2 import id_token
@@ -36,9 +36,8 @@ from google_auth_oauthlib.flow import Flow
 from msrest.authentication import CognitiveServicesCredentials
 from oauthlib.oauth2 import WebApplicationClient
 from pip._vendor import cachecontrol
-from flask import Flask, render_template, abort, jsonify, render_template, request, redirect, url_for, send_from_directory, json, session
+from flask import (Flask, render_template, abort, jsonify, render_template, request, redirect, url_for, send_from_directory, json, session)
 from geofence import check_within_latlng_500
-import geocoder
 import json
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
@@ -47,12 +46,15 @@ from oauthlib.oauth2 import WebApplicationClient
 from pip._vendor import cachecontrol
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
+from celery import Celery 
+
 
 app = Flask(__name__)
 app.config.update(SECRET_KEY=uuid.uuid4().hex)
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=72)
 
-
+# LOGGER
+LOGGER = logging.getLogger(__name__)
 
 app.config.from_pyfile('config.py')
 cos_account = app.config['ACCOUNT_NAME']   # Azure account name
@@ -87,6 +89,7 @@ cv_features = ["categories","brands","adult","color","objects"]
 cv_client = ComputerVisionClient(
     cv_endpoint, CognitiveServicesCredentials(cv_subscription_key))
 
+
 # FLASK CACHE INIT
 cache = Cache(config={'CACHE_TYPE': 'SimpleCache'})
 cache.init_app(app)
@@ -100,8 +103,6 @@ servicebus_client = ServiceBusClient.from_connection_string(conn_str=AZURE_SERVI
 # flag if test db is partitioned on city/category
 is_city_partitioned = True
 
-USER_DB = {}
-
 leader = redis.Redis(host=leaderip, port=9851)
 follower = redis.Redis(host=followerip, port=9851)
 dev_client = redis.Redis(host="localhost", port=9851)
@@ -110,6 +111,16 @@ NEARBY_POSTS_WS = None
 
 NOTIF_BATCH_SIZE = 2
 TOTAL_NOTIF_MAX = 2
+
+RADIUS_THRESHOLD_IN_M = 10000
+
+# NLTK
+nltk.download('omw-1.4')
+
+
+SESSION_IP_OBJECT = geocoder.ip('me')
+IP_LAT, IP_LON = SESSION_IP_OBJECT.latlng
+IP_CITY = SESSION_IP_OBJECT.city
 
 
 # tmp
@@ -159,12 +170,10 @@ def callback():
     )
 
     session["google_id"] = id_info.get("sub")  #defing the results to show on the page
-    session["name"] = id_info.get("name")
+    auth_name = session["google_name"] = id_info.get("name")
 
-    user_id = hashlib.md5(str(session["name"]).encode()).hexdigest()
-    USER_DB[user_id] = {"name" : session["name"]}
+    user_id = hashlib.md5(str(auth_name).encode()).hexdigest()
     session["CURR_USER"] = user_id
-
 
     return redirect("/home")  #the final page where the authorized users will end up
 
@@ -189,30 +198,34 @@ def protected_area():
 def activate_nearby_ws(user_id, radius_in_m=1000):
     try:
         ws = create_connection(f"ws://{leaderip}:9851/NEARBY+users+Match+{user_id}+FENCE+ROAM+posts+*+{radius_in_m}")
-        print("\nSTARTED LISTENING")
+        LOGGER.info("Listening to geofence notifications")
         return ws
     except Exception as e:
-        print(e)
+        LOGGER.warn(e)
         return None
 
 @app.route('/notifs/<radius>')
 def notifs(radius): 
-    [lat, lng] = geocoder.ip('me').latlng
     user_id = session["CURR_USER"]
-    radius_in_m = 1000
-    return render_template("notifs.html", user_id=user_id, radius = radius_in_m, hostip=leaderip, lat = lat, lng = lng)
+    [lat, lng] = get_user_pos(user_id)
+    radius = int(radius)
+    radius_in_m = min(int(radius), RADIUS_THRESHOLD_IN_M)
+    return render_template("notifs.html", user_id=user_id, radius = radius_in_m, host = f"{leaderip}:9851", lat = lat, lng = lng)
 
 @app.route('/activate_notifs/<category>')
 def activate_notifs(category):
     category = str(category)
     NEARBY_POSTS_WS = activate_nearby_ws(session["CURR_USER"])
     if NEARBY_POSTS_WS is None:
+        LOGGER.error("Could not create realtime geofence listener")
         return redirect("/post")
     notif_count = 0
     notif_batch = []
-    upsert_user_pos(session['CURR_USER'], session['lat'], session['lon'])
+    user_id = session["CURR_USER"]
+    lat, lon = get_user_pos(user_id)
+    upsert_user_pos(user_id, lat, lon)
+
     with servicebus_client:
-        city = session.get("city", geocoder.ip('me').city)
         sender = servicebus_client.get_topic_sender(topic_name=f"{category}")
         with sender:
             notif_batch = []
@@ -228,14 +241,15 @@ def activate_notifs(category):
                     try:
                         batch_message.add_message(ServiceBusMessage(json.dumps(data)))
                     except ValueError as v:
-                        print(v)
+                        LOGGER.warn(v)
+                        LOGGER.info("Creating new service bus batch")
                         batch_message = sender.create_message_batch()
            
                     notif_count += 1
-                    # if notif_count % NOTIF_BATCH_SIZE:
-                        # session[f"{category}_post_objs"] = notif_batch
-                        # sender.send_messages(batch_message)
-                        # notif_batch = []
+                    if notif_count % NOTIF_BATCH_SIZE:
+                        session[f"{category}_post_objs"] = notif_batch
+                        sender.send_messages(batch_message)
+                        notif_batch = []
                     
                     if notif_count == TOTAL_NOTIF_MAX:
                         sender.send_messages(batch_message)
@@ -250,7 +264,7 @@ def activate_notifs(category):
 @app.route('/post')
 @cache.cached()
 def index():
-    print('Request for index page received')
+    LOGGER.info('Request for index page received')
     client_ips = request.headers.get('X-Forwarded-For', request.remote_addr)
     print(request.headers)
     print(client_ips)
@@ -258,7 +272,7 @@ def index():
     client_ips = client_ips.split(':')[0]
     if client_ips is None or client_ips == '127.0.0.1':
         print('is none')
-        client_ips = geocoder.ip('me').ip
+        client_ips = SESSION_IP_OBJECT.ip
     # else:
     #     client_ips = client_ips[0]
     msg=session.get('msg')
@@ -268,16 +282,17 @@ def index():
     session['msg'] = ''
     session['name'] = ''
     print("ip:", client_ips)
-    coords = geocoder.ip(str(client_ips)).latlng
-    session["lat"], session["lng"] = coords[0], coords[1]
-    session["city"] = geocoder.ip("me").city
-    print('session message reset')
-    return render_template('index.html', msg=msg)
+
+    city = IP_CITY
+    session['city'] = city
+        
+    LOGGER.info('session message reset')
+    return render_template('index.html', msg=msg, host = f"{leaderip}:9851", user_id = session["CURR_USER"])
 
 @app.route('/query')
 def query():
-   print('Request for query page received')
-   return render_template('query.html')
+   LOGGER.info('Request for query page received')
+   return render_template('query.html', host = f"{leaderip}:9851", user_id = session["CURR_USER"])
 
 @app.route('/home')
 def home():
@@ -287,31 +302,34 @@ def home():
 
     if client_ips is None or client_ips == '127.0.0.1':
         print('is none')
-        client_ips = geocoder.ip('me').ip
+        client_ips = SESSION_IP_OBJECT.ip
 
-    print('Request for home page received')
-    coords = geocoder.ip(str(client_ips)).latlng
-    session["lat"], session["lng"] = coords[0], coords[1]
-    session["city"] = geocoder.ip(str(client_ips)).city
-     # Upsert curr user into GeoSVC
-    upsert_user_pos(session.get("CURR_USER", ""), session["lat"], session["lng"])
+    LOGGER.info('Request for home page received')
+    
+    user_id = session['CURR_USER']
+    # Upsert curr user into GeoSVC
+    # upsert_user_pos(user_id, IP_LAT, IP_LON)
+
+    city = session['city'] = IP_CITY
+    LOGGER.info(IP_CITY)
+
     recent = read_recent()  # strcture = id=recent, last = last one, recents = values
-    print(recent)
+    # print(recent)
     recents = recent['recents']
     recents = ast.literal_eval(recents)
-    print(recents)
-    print(recents[0])
+    # print(recents)
+    # print(recents[0])
 
     last = int(recent['last'])-1
     recents = recents[last:] + recents[:last]
     rendering = []
-    location_string = 'Looking at items from: ' + str(session['city'])
+    location_string = f'Looking at items from: {city}'
     for i in recents:
         output = {}
-        print('i', i)
-        read = cos_container.read_item(str(i), partition_key=session['city'])
+        # read = cos_container.read_item(str(i), partition_key=city)
+        read=get_post_by_id(i)
         try:
-            if read['city'] != session['city']:
+            if read['city'] != city:
                 continue
             try:
                 img = ast.literal_eval(read['blob_id'])[0]
@@ -327,28 +345,26 @@ def home():
             rendering += [output]
         except:
             continue
-            # print('img', img)
 
     return render_template('home.html', recent=rendering, location = location_string, 
-        other_home = "All Recent Items", other_home_link = url_for('home_all'))
+        other_home = "All Recent Items", other_home_link = url_for('home_all'), host = f"{leaderip}:9851", user_id = user_id)
 
 @app.route('/home/all')
 def home_all():
    print('Request for home page received')
    rendering = []
    recent = read_recent() # strcture = id=recent, last = last one, recents = values
-   print(recent)
+#    print(recent)
    recents = recent['recents']
    recents = ast.literal_eval(recents)
-   print(recents)
-   print(recents[0])
+#    print(recents)
+#    print(recents[0])
 
    last = int(recent['last'])-1
    recents = recents[last:] + recents[:last]
    rendering = []
    for i in recents:
         output = {}
-        print('i', i)
         read = get_posts_by_id(i)[0]
         try:
             img = ast.literal_eval(read['blob_id'])[0]
@@ -362,9 +378,8 @@ def home_all():
         output['descr'] = desc
         output['id'] = i
         rendering += [output]
-        # print('img', img)
 
-   return render_template('home.html', recent=rendering, other_home = "Local Items", other_home_link = url_for('home'))
+   return render_template('home.html', recent=rendering, other_home = "Local Items", other_home_link = url_for('home'), host = f"{leaderip}:9851", user_id = session["CURR_USER"])
 
 
 # using generate_container_sas
@@ -382,12 +397,10 @@ def get_img_url_with_container_sas_token(blob_name):
 
 @app.route('/query_load', methods=['POST','GET'])
 def query_load():
-    print('query_load')
     if request.method == "POST":
         item = request.form.get('itm')
         read = cos_container.read_item(str(item), partition_key=str(item))
         files = ast.literal_eval(read['blob_id'])
-        # for file in files:
         img1 = img2 = img3 = img4 = ''
         try: 
             img1 = get_img_url_with_container_sas_token(files[0])
@@ -396,18 +409,14 @@ def query_load():
             img4 = get_img_url_with_container_sas_token(files[3])
         except:
             pass
-
-
         return render_template("query_load.html", id=item,  img1=img1, img2 = img2, img3=img3, img4=img4)#, ButtonPressed=ButtonPressed)
-    return render_template("query_load.html", id = 'error')#, ButtonPressed = ButtonPressed)
+    return render_template("query_load.html", id = 'error', host = f"{leaderip}:9851", user_id = session["CURR_USER"])#, ButtonPressed = ButtonPressed)
 
 
 
 @app.route('/query_results', methods=['POST'])
 def query_results():
-    print('query_load')
-    # print(search_term)
-    # term = search_term
+    LOGGER.info('query_load')
 
     if request.method == "POST":
         term = request.form.get('input')
@@ -415,11 +424,11 @@ def query_results():
         items = []
         for f in forms:
             items += get_posts_by_category(f)
-        print(items)
+        
         rendering = []
         for i in items:
                 output = {}
-                print('i', i)
+                
                 read = i
                 try:
                     img = ast.literal_eval(read['blob_id'])[0]
@@ -434,10 +443,9 @@ def query_results():
                 output['id'] = i['id']
                 rendering += [output]
         
-
-
         return render_template("query_results.html", query_key = term, recent = rendering) #, ButtonPressed=ButtonPressed)
-    return render_template("query_load.html", id = 'error')#, ButtonPressed = ButtonPressed)
+    return render_template("query_load.html", id = 'error', host = f"{leaderip}:9851", user_id = session["CURR_USER"])#, ButtonPressed = ButtonPressed)
+
 
 @app.route('/favicon.ico')
 def favicon():
@@ -451,27 +459,28 @@ def hello():
    name = request.form.get('name')
    comment = request.form.get('freeform') 
    session['name'] = name
-   session["city"] = geocoder.ip("me").city
-   print(comment)
+   user_id = session.get("CURR_USER")
+   (lat, lon) = get_user_pos(user_id)
+   city = session['city']
    if name and comment:
-       print('Request for hello page received with name=%s' % name)
+       LOGGER.info('Request for hello page received with name=%s' % name)
        global post_id
        post = {
             "name" : name,
             "comment":comment,
-            "city": session["city"],
-            "target_lat" : session["lat"],
-            "target_lng" : session["lng"],
-            "user_id" : session.get("CURR_USER")
+            "city": city,
+            "target_lat" : lat,
+            "target_lng" : lon,
+            "user_id" : user_id
         }
        post_id = insert_container(post)
 
         # Upsert into GeoSVC
-       upsert_post(post_id, session["lat"], session["lon"])
+       upsert_post(post_id, lat, lon)
 
-       return render_template('hello.html', name = name, comment = comment)
+       return render_template('hello.html', name = name, comment = comment, host = f"{leaderip}:9851", user_id = user_id)
    else:
-        print('Request for hello page received with no name or comment -- redirecting')
+        LOGGER.info('Request for hello page received with no name or comment -- redirecting')
         return redirect(url_for('index'))
 
 @app.route('/item/<item_id>')
@@ -494,7 +503,7 @@ def item(item_id):
     except:
         tags= ''
 
-    return render_template('item.html', itemname = name, desc = desc, pics_list = url_img, tags = tags)
+    return render_template('item.html', itemname = name, desc = desc, pics_list = url_img, tags = tags, host = f"{leaderip}:9851", user_id = session["CURR_USER"])
 
 
 
@@ -503,19 +512,12 @@ def insert_container(post,picture_id=''):
     desc = post["comment"]
     city = post["city"]
     user_id = session["CURR_USER"]
-    # udid = post["fence_udid"]
-
-    user_id = session["CURR_USER"]
     id = hashlib.md5(str(title).encode()).hexdigest()
     id = 'item'+id
     cos_container.upsert_item({
         'id':'{0}'.format(id),
         'user_id' : user_id,
-        'test1' : 'test2',
-        'user_id': user_id,
-
         'city' : city,
-        # "fence_udid": udid, 
         "target_lat": post["target_lat"],
         "target_lng": post["target_lng"],
         'title' : '{0}'.format(str(title)),
@@ -529,13 +531,10 @@ def update_container_pic(item, picture_id=''):
     read = cos_container.read_item(str(item), partition_key=str(session["city"]))
     cos_container.upsert_item({
         'id':'{0}'.format(item),
-        'test1' : 'test',
         'user_id': read['user_id'],
-
         'city' : read['city'],
         "target_lat": read["target_lat"],
-        "target_lng": read["target_lng"],
-        # "fence_udid": read['fence_udid'], 
+        "target_lng": read["target_lng"], 
         'title' : '{0}'.format(read['title']),
         'descr' : '{0}'.format(read['descr']),
         'blob_id': '{0}'.format(str(picture_id))
@@ -543,20 +542,17 @@ def update_container_pic(item, picture_id=''):
     return id
 
 def update_container_tags(item,tags=''):
-    # print(str(item))
+
     read = cos_container.read_item(
         str(item), partition_key=str(session["city"]))
     cos_container.upsert_item({
         'id':'{0}'.format(item),
-        'test1' : 'test',
         'user_id': read['user_id'],
-
         'title' : '{0}'.format(read['title']),
         'descr' : '{0}'.format(read['descr']),
         'city' : read["city"],
         "target_lat": read["target_lat"],
         "target_lng" : read["target_lng"],
-        # 'fence_udid' : read['fence_udid'],
         'blob_id': '{0}'.format(read['blob_id']),
         'tags': tags
     })
@@ -583,6 +579,15 @@ def get_posts_by_id(id):
     ))
     return items
 
+def get_posts_by_id_list(idList):
+    items = list(cos_container.query_items(
+            query=f"SELECT * FROM r WHERE ARRAY_CONTAINS(@ids, r.id)",
+            parameters=[
+                { "name":"@ids", "value": idList}
+                        ],
+            enable_cross_partition_query=is_city_partitioned
+            ))
+    return items
 
 
 @cache.memoize(50)
@@ -597,6 +602,7 @@ def get_posts_by_city(city):
     print(len(items))
     return items
 
+
 @cache.memoize(50)
 def get_posts_by_city_and_category(city, category):
     items = list(cos_container.query_items(
@@ -608,6 +614,7 @@ def get_posts_by_city_and_category(city, category):
         enable_cross_partition_query=is_city_partitioned
     ))
     return items
+
 
 @cache.memoize(50)
 def get_posts_by_category(category):
@@ -621,8 +628,10 @@ def get_posts_by_category(category):
     return items
 
 
-def get_nearby_posts(src_lat, src_lng, city, category):
-    if useGeofenceV1:
+def get_nearby_posts(src_lat, src_lng, city, category, radius=1000):
+    search_res = nearby_posts(src_lat, src_lng, radius, category = "")
+
+    if search_res == {} or useGeofenceV1:
         DIST_THRESH_IN_KM = 5
         candidate_posts =  []
         if category is None:
@@ -650,17 +659,8 @@ def get_nearby_posts(src_lat, src_lng, city, category):
         cache.set("local-feed",res)
     
     else:
-        ids = nearby_posts(src_lat, src_lng, 500, category = "")
-        print(ids)
-        items = list(cos_container.query_items(
-            query=f"SELECT * FROM r WHERE ARRAY_CONTAINS(@ids, r.id)",
-            parameters=[
-                { "name":"@ids", "value": ids }
-                        ],
-            enable_cross_partition_query=is_city_partitioned
-            ))
-
-
+        ids = search_res.get('idList')
+        items = get_posts_by_id_list(ids)
     return items
 
 
@@ -672,32 +672,49 @@ def near_cached_coords(src_lat, src_lng):
         return True
 
 @login_is_required
-@app.route('/local-feed',methods=['GET'])
-def get_local_feed():
+@app.route('/local-feed/<radius>')
+def get_local_feed(radius):
     category = request.args.get('category', None)
-    city = session.get("city", None)
+    user_id = session["CURR_USER"]
+    src_lat, src_lng = get_user_pos(user_id)
+    city = session['city']
 
-    if city is None:
-        city = geocoder.ip("me").city
-    
-    if not session.get("lat"):
-        session["lat"], session["lng"] = geocoder.ip("me").latlng
-        src_lat, src_lng = session["lat"], session["lng"]
-    else:
-        src_lat, src_lng = session["lat"], session["lng"]
+    if radius is not None:
+        radius = int(radius)
 
     if near_cached_coords(src_lat, src_lng):
         res = cache.get("local-feed")
         if res:
             return res
 
-
     cache.set("latest_coords", (src_lat, src_lng))
     cache.set("latest_city", city)
 
-    res = get_nearby_posts(src_lat, src_lng, city, category)
+    res = get_nearby_posts(src_lat, src_lng, city, category, radius)
 
-    return jsonify(res)
+    rendering = []
+    location_string = f'Looking at posts with {radius} meters of your current location'
+    for post in res:
+        output = {}
+        # read = cos_container.read_item(str(i), partition_key=city)
+        read=post
+        try:
+            try:
+                img = ast.literal_eval(read['blob_id'])[0]
+                img = get_img_url_with_container_sas_token(img)
+                output['img'] = img
+            except:
+                output['img'] = ''
+            name = read['title']
+            output['name'] = name
+            desc = read['descr']
+            output['descr'] = desc
+            output['id'] = read['id']
+            rendering += [output]
+        except:
+            continue
+
+    return render_template('local_feed.html', posts=rendering, location = location_string, other_home_link = url_for('home_all'), host = f"{leaderip}:9851", user_id = user_id)
 
 
 def get_post_by_id(post_id):
@@ -711,11 +728,11 @@ def get_post_by_id(post_id):
     return items[0]
 
 def read_recent():
-    src_lat, src_lng = session.get("lat", -1), session.get("lng", -1)
-    if src_lat == -1:
-        src_lat, src_lng = geocoder.ip("me").latlng
+    user_id = session["CURR_USER"]
+    src_lat, src_lng = get_user_pos(user_id)
     if near_cached_coords(src_lat, src_lng):
         res = cache.get("local_recent")
+        LOGGER.info("Getting Cached Local Recent posts")
         if res is not None:
             return res
     
@@ -741,7 +758,8 @@ def update_recent(new_item):
         cos_container.upsert_item({
         'id':'{0}'.format('recent'),
         'last' : '{0}'.format(last),
-        'recents':'{0}'.format(recents) 
+        'recents':'{0}'.format(recents),
+        'city': 'recent'
     }) 
         print('sucess')
     except:
@@ -756,9 +774,6 @@ def update_recent(new_item):
         print('failed123')
 
         
-
-
-
 blob_service_client = BlobServiceClient.from_connection_string(blob_connect_str)
 
 def allowed_file(filename):
@@ -820,11 +835,11 @@ def upload():
             update_recent(post_id)
             session["msg"] = msg
 
-            return redirect(url_for('index'))
+            return redirect(url_for('index', host = f"{leaderip}:9851", user_id = session["CURR_USER"]))
             # render_template("index.html", msg=msg)
         else:
             session["msg"] = 'No pics provided.'
-            return redirect(url_for('index'))
+            return redirect(url_for('index', host = f"{leaderip}:9851", user_id = session["CURR_USER"]))
             # render_template("index.html", msg='No pics provided.')
     else:
         session["msg"] ='Upload failed.'
@@ -846,6 +861,6 @@ def handle_exception(e):
 
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0")
+    app.run(host="0.0.0.0", debug=True)
     leader.close()
     follower.close()

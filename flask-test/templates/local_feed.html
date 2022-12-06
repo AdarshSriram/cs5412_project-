@@ -1,7 +1,7 @@
 <!doctype html>
 
 <head>
-    <title>Home Site</title>
+    <title>Local Feed</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='bootstrap/css/bootstrap.min.css') }}">
     <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <script src="{{url_for('static', filename='bootstrap/js/messages.js')}}"></script>
@@ -11,26 +11,22 @@
 <body>
     <main>
         <div class="px-4 py-3 my-2 text-center">
-        <h1 class="display-6 fw-bold text-primary">Query Results</h1>
-        <h2 class="display-6 fw-bold" style="font-size:20px">{{query_key}}</h1>
-        <!-- <a href="{{other_home_link}}">Link to: {{other_home}}</a> -->
-        
-        <form action="{{url_for('query_results', search_term = input)}}" method="POST">
-            <input name="input" type="search" placeholder="Search for an item">
-            <button type="submit">Search</button>
-        </form>
+        <h1 class="display-6 fw-bold text-primary">Your Local Feed of Nearby Posts!</h1>
+        <h2 class="display-6 fw-bold" style="font-size:20px">{{location}}</h1>
+        <a href="{{other_home_link}}">Link to: {{home_url}}</a>
+
 
         </div>
-        {% for dict in recent | batch (3)  %}
+        {% for dict in posts | batch (3)  %}
         <div class="row-cols-3" style="display: flex; justify-content: center;">
             {% for value in dict %}
             <div class="col-3" style="padding: 10px; background-color: #EEE; margin: 20px; text-align: center;">
                 <p style="font-size: 24px">{{ value["name"] }}</p>
                 <div style="display:flex; justify-content: center; align-items: center; max-height: 90%;">
-                <img style="max-width: 100%; height: auto" src="{{value["img"]}}"/>
+                <img style="max-width: 100%; height: auto" src='{{value["img"]}}'/>
                 </div>
-                <p style="font-size: 12px">{{ value["desc"] }}</p>
-                <a style="font-size: 14px;" href="{{url_for('item', item_id = value["id"])}}">Link to Item Page</a>
+                <p style="font-size: 12px">{{ value["descr"] }}</p>
+                <a style="font-size: 14px;" href="{{url_for('item', item_id = value['id'])}}">Link to Item Page</a>
 
             </div>
             {% endfor %}
@@ -47,7 +43,7 @@
         if (!!window.SharedWorker && navigator.geolocation) {
             var worker = new SharedWorker("{{url_for('static', filename='common.js')}}");
             worker.port.start(); 
-            worker.port.onmessage = function(e){}; 
+            worker.port.onmessage = function(e){console.log(e.data)}; 
             navigator.geolocation.getCurrentPosition(sendLocation);
             function sendLocation(position) {
                     const msg = {

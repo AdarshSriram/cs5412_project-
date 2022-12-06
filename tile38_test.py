@@ -14,20 +14,28 @@ host = f"{leaderip}:9851"
 def test_tile38():
     client = redis.Redis(host=leaderip, port=9851)
     # insert data
-    client.execute_command("""SET user adarsh1 field c 1 POINT 0 0""")
-    client.execute_command("""SET user adarsh2 field a 2 POINT 0 0""")
-    client.execute_command("""SET user adarsh3 field a 2 POINT 0 0""")
-    client.execute_command("""SET post shoe1 field c 2 POINT 0 0""")
-    client.execute_command("""SET post shoe2 field c 2 POINT 0 0""")
-    # r =client.execute_command('GET', 'fleet', 'truck1', 'WITHFIELDS')
-    # r = client.execute_command("NEARBY post FENCE NODWELL ROAM user a 100")
-    # print(type(json.loads(r.decode('utf-8'))))
+    client.execute_command("""SET test_user adarsh1 field c 1 POINT 0 0""")
+    # client.execute_command("""SET user adarsh2 field a 2 POINT 0 0""")
+    # client.execute_command("""SET user adarsh3 field a 2 POINT 0 0""")
+    client.execute_command("""SET test_post shoe1 field c 2 POINT 0 0""")
+    client.execute_command("""SET test_post shoe2 field c 2 POINT 0 0""")
+    # r1 =client.execute_command('GET', 'user', 'adarsh1', 'WITHFIELDS')
+    # r2 = json.loads(client.execute_command('GET', 'user', 'adarsh1').decode('utf-8'))
+    
+    r = client.execute_command("NEARBY test_post point 0 0 1000")
     # res = []
+    print(r[0])
+    print()
+    print(r[1])
+    print(r[1][0])
+    print(r[1][1])
     # for o in r[1]:
-    #     res.append({
-    #         "id" : o[0].decode('utf-8'),
-    #         "coords" : json.loads(o[1].decode('utf-8'))["coordinates"]
-    #     })
+    #     print(o[0])
+    #     print(o[1])
+        # res.append({
+        #     "id" : o[0].decode('utf-8'),
+        #     "coords" : json.loads(o[1].decode('utf-8'))["coordinates"]
+        # })
     # print(res)
     # result2 = client.execute_command("""SETHOOK warehouse https://tile38hook.azurewebsites.net/api/testhook NEARBY fleet FENCE POINT 0 0 500""")
     # print(result2)
@@ -39,7 +47,7 @@ def test_tile38():
     client.close()
 
 
-# test_tile38()
+test_tile38()
 
 from websocket import create_connection
 import time
@@ -71,6 +79,6 @@ def socket_v1():
     ws.close()
 
 
-socket_v1()
+# socket_v1()
 
 

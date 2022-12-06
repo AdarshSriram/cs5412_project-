@@ -1,4 +1,4 @@
-rom datetime import datetime, timedelta
+from datetime import datetime, timedelta
 from azure.cosmos import CosmosClient
 from azure.storage.blob import BlobServiceClient,generate_container_sas, ContainerSasPermissions
 import hashlib

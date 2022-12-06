@@ -1,6 +1,19 @@
 import json
-from app import leader, follower, dev_client
+from app import leader, follower, dev_client, LOGGER, IP_LAT, IP_LON
 
+def get_user_pos(user_id):
+    try:
+        res = follower.execute_command('GET', 'users', user_id).decode('utf-8')
+        res = json.loads(res)
+        coords = res.get('coordinates')
+        return (coords[1], coords[0])
+    except Exception as e:
+        LOGGER.warn(e)
+        return [IP_LAT, IP_LON]
+
+def get_user_categoryEnum(user_id):
+    res =follower.execute_command('GET', 'users', user_id, 'WITHFIELDS')
+    return int(res[1][1].decode('utf-8'))
 
 
 def upsert_user_pos(user_id, lat, lon):
@@ -18,19 +31,35 @@ def update_post_category(post_id, category=1):
     leader.execute_command(f"""FSET posts {post_id} category {category}""")
 
 def _decode_obj_list(r):
-    res = []
+    post_ids = []
+    post_items = []
     for o in r[1]:
-        res.append(o[0].decode('utf-8'))
-    return res
+        coords = json.loads(o[1].decode('utf-8')).get("coordinates")
+        post_data = {
+            "id" : o[0].decode('utf-8'),
+            "lat" : coords[1],
+            'lon' : coords[0]
+        }
+        if len(o) > 2:
+            category = o[2][1].decode('utf-8')
+            post_data['categoryEnum'] = category
+
+        post_items.append(post_data)
+        post_ids.append(post_data['id'])
+
+    return {'items' : post_items, 'idList': post_ids}
 
 def nearby_posts(lat, lon, radius, category = ""):
     r = []
-    if category != "":
-        r = follower.execute_command(f"""nearby posts where category {category} point {lat} {lon} {radius}""")
-    else:
-        r = follower.execute_command(f"""nearby posts point {lat} {lon} {radius}""")
-    
-    return _decode_obj_list(r)
+    try:
+        if category != "":
+            r = follower.execute_command(f"""nearby posts where category {category} point {lat} {lon} {radius}""")
+        else:
+            r = follower.execute_command(f"""nearby posts point {lat} {lon} {radius}""")     
+        return _decode_obj_list(r)
+    except Exception as e:
+        LOGGER.error(e)
+        return {}
 
 
 # Detect if any user interested in some category comes near post
@@ -40,15 +69,6 @@ def set_post_fence(post_id, category):
     lng, lat = postObj.get('coordinates')
     leader.execute_command(f"sethook notify https://tile38hook.azurewebsites.net/api/testhook NEARBY users Where category {category} FENCE POINT {lat} {lng} 500")
     
-
-# Listen to nearby posts for 
-def activate_nearby_ws(user_id, radius_in_m=1000):
-    try:
-        ws = create_connection(f"ws://{leader}/NEARBY+users+Match+{user_id}+FENCE+ROAM+posts+*+{radius_in_m}")
-        return ws
-    except Exception as e:
-        print(e)
-        return None
 
 def process_ws_res(res, category = "testcategory"):
     r =  json.loads(res)
