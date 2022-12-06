@@ -1,4 +1,4 @@
-Flask==2.0.2
+Flask
 azure-common==1.1.24
 azure-nspkg==3.0.2
 # azure-storage==0.36.0
@@ -9,10 +9,19 @@ azure-cosmos==4.3.0
 werkzeug
 azure-cognitiveservices-vision-computervision
 pillow
-geocoder
-Flask-Caching
-google-auth   
-google-auth-oauthlib                      
-oauthlib
 msrest
 word_forms
+oauthlib
+pyOpenSSL
+Flask-Login
+Flask-Caching
+google-auth==1.27.0
+google-auth-oauthlib==0.4.2
+requests==2.25.1
+requests-oauthlib==1.3.0
+pyle38
+asyncio
+geocoder
+celery
+nltk
+reverse_geocode

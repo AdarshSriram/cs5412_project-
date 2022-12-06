@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+ 
+<html lang="en">
+ 
+<head>
+ 
+    <meta charset="UTF-8">
+ 
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+ 
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ 
+    <title>Notifications</title>
+ 
+</head>
+ 
+<body>
+
+     <h1>Realtime Notifications</h1>
+
+    <div id="log"></div>
+ 
+</body>
+<script src = https://cdnjs.cloudflare.com/ajax/libs/node-uuid/1.4.8/uuid.min.js></script>
+
+<!-- {% block content %}  -->
+<script>
+    if (!!window.SharedWorker && navigator.geolocation) {
+            var worker = new SharedWorker("{{url_for('static', filename='common.js')}}");
+            worker.port.start(); 
+            worker.port.onmessage = function(e){}; 
+            navigator.geolocation.getCurrentPosition(sendLocation);
+            function sendLocation(position) {
+                    const msg = {
+                        lat : position.coords.latitude,
+                        lon : position.coords.longitude,
+                        host : '{{host}}',
+                        user_id : '{{user_id}}'
+                    }
+                    worker.port.postMessage(msg);
+                    console.log('{{user_id}}');
+                }
+        }
+        
+    const user_id = '{{user_id}}'
+    const radius = '{{radius}}'
+    const host = '{{host}}'
+    const lat = '{{lat}}'
+    const lng = '{{lng}}'
+    const url = 'ws://'+host+'/NEARBY+users+Match+'+user_id+'+FENCE+ROAM+posts+*+'+radius
+    
+    
+    const socket = new WebSocket(url);
+
+    socket.addEventListener('open', function (event) {
+        console.log("Listening for notifs")
+ 
+        document.getElementById('log').innerHTML += `<span style="color: red">Started Listening</span><br>`;
+
+});
+ 
+socket.addEventListener('message', function (event) {
+    console.log("Got notif")
+    document.getElementById('log').innerHTML += `<span style="color: red">${event.data}</span><br>`
+ 
+});
+ 
+</script>
+<!-- {% endblock %} -->
+
+ 
+</html>

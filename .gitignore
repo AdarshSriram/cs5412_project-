@@ -1,1 +1,5 @@
 .env
+config.py
+.python_packages
+__pycache__
+.venv
