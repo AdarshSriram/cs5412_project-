@@ -1,5 +1,5 @@
 import json
-from app import leader, follower, dev_client, LOGGER, IP_LAT, IP_LON
+from rediscnfg import leader, follower, dev_client, LOGGER, IP_LAT, IP_LON
 
 def get_user_pos(user_id):
     try:
