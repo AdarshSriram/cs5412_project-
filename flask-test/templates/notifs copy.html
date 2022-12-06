@@ -21,7 +21,9 @@
     <div id="log"></div>
  
 </body>
-{% block content %} 
+<script src = https://cdnjs.cloudflare.com/ajax/libs/node-uuid/1.4.8/uuid.min.js></script>
+
+<!-- {% block content %}  -->
 <script>
     if (!!window.SharedWorker && navigator.geolocation) {
             var worker = new SharedWorker("{{url_for('static', filename='common.js')}}");
@@ -64,7 +66,7 @@ socket.addEventListener('message', function (event) {
 });
  
 </script>
-{% endblock %}
+<!-- {% endblock %} -->
 
  
 </html>
