@@ -10,9 +10,12 @@ onconnect = function (event) {
 
     setInterval(
         () => {
+          // console.log(`http://${host}/set+users+${user_id}+point+${lat}+${lon}`)
         fetch(`http://${host}/set+users+${user_id}+point+${lat}+${lon}`, {mode: 'no-cors'})
-        .catch(err => port.postMessage(err))
-      }, 60000
+        .catch(err => {
+          console.log(err)
+        })
+      }, 30000
     );
   }
 
