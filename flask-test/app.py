@@ -120,7 +120,6 @@ is_city_partitioned = True
 
 leader = redis.Redis(host=leaderip, port=9851)
 follower = redis.Redis(host=followerip, port=9851)
-dev_client = redis.Redis(host="localhost", port=9851)
 
 NEARBY_POSTS_WS = None
 
