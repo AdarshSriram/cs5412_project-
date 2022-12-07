@@ -1,4 +1,5 @@
 import ast
+from collections import defaultdict
 import hashlib
 import json
 from geofence_v2 import *
@@ -46,11 +47,13 @@ from oauthlib.oauth2 import WebApplicationClient
 from pip._vendor import cachecontrol
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
-from celery import Celery 
+from azure.servicebus.management import ServiceBusAdministrationClient
+from flask_session import Session
+
+# import reverse_geocode
 
 
 app = Flask(__name__)
-app.config.update(SECRET_KEY=uuid.uuid4().hex)
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=72)
 
 # LOGGER
@@ -64,6 +67,8 @@ cos_container = app.config['CONTAINER'] # Container name
 cos_allowed_ext = app.config['ALLOWED_EXTENSIONS'] # List of accepted extensions
 cos_max_length = app.config['MAX_CONTENT_LENGTH'] # Maximum size of the uploaded file
 cos_uri = app.config['URI']
+
+app.config.update(SECRET_KEY=uuid.uuid4().hex)
 
 client = CosmosClient(cos_uri, credential = cos_key)
 
@@ -97,8 +102,18 @@ cache.init_app(app)
 useGeofenceV1 = False
 
 servicebus_client = ServiceBusClient.from_connection_string(conn_str=AZURE_SERVICE_BUS_CONN_STR, logging_enable=True)
+servicebus_mgmt_client = ServiceBusAdministrationClient.from_connection_string(AZURE_SERVICE_BUS_CONN_STR)
+
+ALL_TOPICS = set([])
+with servicebus_mgmt_client:
+    for topic_properties in servicebus_mgmt_client.list_topics():
+        ALL_TOPICS.add(topic_properties.name)
+
+
+
 # 
-# session.clear()
+
+USER_TAGS = set([])
 
 # flag if test db is partitioned on city/category
 is_city_partitioned = True
@@ -117,6 +132,10 @@ RADIUS_THRESHOLD_IN_M = 10000
 # NLTK
 nltk.download('omw-1.4')
 
+SESSION_TYPE = 'redis'
+
+# sess = Session()
+# sess.init_app(app)
 
 SESSION_IP_OBJECT = geocoder.ip('me')
 IP_LAT, IP_LON = SESSION_IP_OBJECT.latlng
@@ -240,14 +259,13 @@ def get_posts_by_id_list(idList):
     return items
 
 
-# @app.route('/notifs/<radius>', methods=["GET"])
+
 # @cache.cached()
 # def notifs(radius): 
 #     session['CURR_USER'] = "69bd0823d287fbe035d068e3d4d22596"
 #     user_id = session["CURR_USER"]
 #     radius = int(radius)
 #     radius_in_m = min(int(radius), RADIUS_THRESHOLD_IN_M)
-#     # return render_template("notifs.html", user_id=user_id, radius = radius_in_m, host = f"{leaderip}:9851", lat = lat, lng = lng)
 #     return render_template("notifs_v2.html", user_id=user_id, radius = radius_in_m, host = f"{leaderip}:9851")
 
 
@@ -293,6 +311,120 @@ def render_notifs(val, make_ref = False):
     return rendering
 
     
+def create_sbus_topics(topics):
+    # lat, lon = get_user_pos(session['CURR_USER'])
+    # city = reverse_geocode.search(lat, lon)['city']
+    city = 'Ithaca'
+    res = []
+    with servicebus_mgmt_client as mgmt_cl:
+        for topic in topics:
+            name = f"{city}_{topic}"
+            res.append(name)
+            try:
+                if name not in ALL_TOPICS:
+                    mgmt_cl.create_topic(name)
+                    ALL_TOPICS.add(name)
+                if topic not in ALL_TOPICS:
+                    mgmt_cl.create_topic(topic)
+                    ALL_TOPICS.add(topic)
+            except:
+                continue
+    mgmt_cl.close()
+    return res
+
+
+def publish_post_to_topic(post, tag):
+    res = create_sbus_topics([tag]) + [tag]
+    with servicebus_client:
+        for topic in res:
+        # get a Topic Sender object to send messages to the topic
+            sender = servicebus_client.get_topic_sender(topic_name=topic)
+            with sender:
+                sender.send_messages(ServiceBusMessage(post.get('name', ""),application_properties=post))
+                print("MESSAGE")
+            sender.close()
+    servicebus_client.close()
+
+
+def create_sbs_subscription(tags):
+    user_id = session['CURR_USER']
+    lat, lon = get_user_pos(user_id)
+    # city = reverse_geocode.search(lat, lon)['city']
+    city = 'Ithaca'
+    with servicebus_mgmt_client as mgmt_cl:
+        for tag in tags:
+            topic = f"{city}_{tag}"
+            sub = f"{user_id}_{tag}"
+            try:
+                mgmt_cl.create_subscription(topic, sub)
+                mgmt_cl.create_subscription(tag, sub)
+            except:
+                continue
+    mgmt_cl.close()
+
+
+def get_subscription_msgs(tags, same_city = True):
+    session['CURR_USER']  = "69bd0823d287fbe035d068e3d4d22596"
+    user_id = session['CURR_USER']
+    lat, lon = get_user_pos(user_id)
+    # city = reverse_geocode.search(lat, lon)['city']
+    city = 'Ithaca'
+    res = defaultdict(list)
+    with servicebus_client:
+        for tag in tags:
+            topic = tag
+            if same_city:
+                topic = f"{city}_{tag}"
+            subscription = f"{user_id}_{tag}"
+            receiver = servicebus_client.get_subscription_receiver(
+                topic_name=topic,
+                subscription_name=subscription
+            )
+            with receiver:
+                received_msgs = receiver.receive_messages(max_message_count=10, max_wait_time=5)
+                for msg in received_msgs:
+                    if msg is not None and msg.application_properties is not None:
+                        post_obj = {}
+                        print()
+                        for k, v in msg.application_properties.items():
+                            if type(v) == bytes:
+                                v = v.decode('utf-8')
+                            post_obj[k.decode('utf-8')] = v
+                        res[topic].append(post_obj)
+                    receiver.complete_message(msg)
+    
+    servicebus_client.close()
+    return res
+
+@app.route('/sub/<tags>')
+def sub(tags):
+    if '+' not in tags:
+        tags = [tags]
+    else:
+        tags = tags.split('+')
+    
+    tags_2 = []
+    for t in tags:
+        if t not in USER_TAGS:
+            tags_2.append(t)
+            USER_TAGS.add(t)
+    create_sbs_subscription(tags)
+    return redirect("/home")
+
+
+@app.route('/watch_tags/<tags>')
+@app.route('/watch_tags/<tags>/<city>')
+def watch(tags, city = ""):
+    same_city = (city == "")
+    if '+' not in tags:
+        tags = [tags]
+    else:
+        tags = tags.split('+')
+    res = get_subscription_msgs(tags, same_city)
+    return jsonify(res)
+
+
+
 def activate_notifs(category):
     category = str(category)
     NEARBY_POSTS_WS = activate_nearby_ws(session["CURR_USER"])
@@ -344,6 +476,7 @@ def activate_notifs(category):
 @app.route('/post')
 @cache.cached()
 def index():
+    session['CURR_USER'] = "69bd0823d287fbe035d068e3d4d22596"
     LOGGER.info('Request for index page received')
     client_ips = request.headers.get('X-Forwarded-For', request.remote_addr)
     print(request.headers)
@@ -624,6 +757,8 @@ def update_container_tags(item,tags=''):
         'blob_id': '{0}'.format(read['blob_id']),
         'tags': tags
     })
+    # publish to service bus topic
+    publish_post_to_topic(read, tags[0]['tag'])
     return id
 
 
