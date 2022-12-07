@@ -194,6 +194,19 @@ def f():
 def protected_area():
     return f"Hello {session['name']}! <br/> <a href='/logout'><button>Logout</button></a>"  #the logout button 
 
+
+# using generate_container_sas
+def get_img_url_with_container_sas_token(blob_name):
+    container_sas_token = generate_container_sas(
+        account_name=blob_account,
+        container_name=blob_container,
+        account_key=blob_key,
+        permission=ContainerSasPermissions(read=True),
+        expiry=datetime.utcnow() + timedelta(hours=1)
+    )
+    blob_url_with_container_sas_token = f"https://{blob_account}.blob.core.windows.net/{blob_container}/{blob_name}?{container_sas_token}"
+    return blob_url_with_container_sas_token
+
 # Listen to nearby posts for 
 def activate_nearby_ws(user_id, radius_in_m=1000):
     try:
@@ -204,15 +217,82 @@ def activate_nearby_ws(user_id, radius_in_m=1000):
         LOGGER.warn(e)
         return None
 
-@app.route('/notifs/<radius>')
-def notifs(radius): 
-    user_id = session["CURR_USER"]
-    [lat, lng] = get_user_pos(user_id)
-    radius = int(radius)
-    radius_in_m = min(int(radius), RADIUS_THRESHOLD_IN_M)
-    return render_template("notifs.html", user_id=user_id, radius = radius_in_m, host = f"{leaderip}:9851", lat = lat, lng = lng)
 
-@app.route('/activate_notifs/<category>')
+def get_posts_by_id(id):
+    items = list(cos_container.query_items(
+    query="SELECT * FROM r WHERE r.id=@id",
+    parameters=[
+        { "name":"@id", "value": id }
+    ],
+        enable_cross_partition_query=True
+    ))
+    return items
+
+
+def get_posts_by_id_list(idList):
+    items = list(cos_container.query_items(
+            query=f"SELECT * FROM r WHERE ARRAY_CONTAINS(@ids, r.id)",
+            parameters=[
+                { "name":"@ids", "value": idList}
+                        ],
+            enable_cross_partition_query=is_city_partitioned
+            ))
+    return items
+
+
+# @app.route('/notifs/<radius>', methods=["GET"])
+# @cache.cached()
+# def notifs(radius): 
+#     session['CURR_USER'] = "69bd0823d287fbe035d068e3d4d22596"
+#     user_id = session["CURR_USER"]
+#     radius = int(radius)
+#     radius_in_m = min(int(radius), RADIUS_THRESHOLD_IN_M)
+#     # return render_template("notifs.html", user_id=user_id, radius = radius_in_m, host = f"{leaderip}:9851", lat = lat, lng = lng)
+#     return render_template("notifs_v2.html", user_id=user_id, radius = radius_in_m, host = f"{leaderip}:9851")
+
+
+@app.route('/monitor/<radius>', methods=["GET", "POST"])
+def view_notifs(radius):
+    # session['CURR_USER'] = "69bd0823d287fbe035d068e3d4d22596"
+    user_id = session['CURR_USER']
+    if request.method == "GET":
+        session["socket_url"] = f'ws://{leaderip}:9851/NEARBY+users+Match+{user_id}+FENCE+ROAM+posts+*+{radius}'
+        return render_template('notifs_loader.html', radius=radius, url = session["socket_url"], posts = [], user_id = user_id, host = f'{leaderip}:9851')
+    else:
+        val = request.json.get('notif_batch')
+        post_objs = render_notifs(val, make_ref=True)
+        return jsonify(post_objs)
+
+
+
+def render_notifs(val, make_ref = False):
+    rendering = []
+    for post in val:
+        if type(post) == str:
+            post = json.loads(post)
+        output = {}
+        read=get_posts_by_id(post['id'])[0]
+        try:
+            try:
+                img = ast.literal_eval(read['blob_id'])[0]
+                img = get_img_url_with_container_sas_token(img)
+                output['img'] = img
+            except Exception as e:
+                output['img'] = ''
+            name = read['title']
+            output['name'] = name
+            desc = read['descr']
+            output['descr'] = desc
+            output['id'] = read['id']
+            if make_ref:
+                output['item_ref'] = url_for('item', item_id = read['id'])
+            rendering += [output]
+        except Exception:
+            continue
+
+    return rendering
+
+    
 def activate_notifs(category):
     category = str(category)
     NEARBY_POSTS_WS = activate_nearby_ws(session["CURR_USER"])
@@ -381,18 +461,6 @@ def home_all():
 
    return render_template('home.html', recent=rendering, other_home = "Local Items", other_home_link = url_for('home'), host = f"{leaderip}:9851", user_id = session["CURR_USER"])
 
-
-# using generate_container_sas
-def get_img_url_with_container_sas_token(blob_name):
-    container_sas_token = generate_container_sas(
-        account_name=blob_account,
-        container_name=blob_container,
-        account_key=blob_key,
-        permission=ContainerSasPermissions(read=True),
-        expiry=datetime.utcnow() + timedelta(hours=1)
-    )
-    blob_url_with_container_sas_token = f"https://{blob_account}.blob.core.windows.net/{blob_container}/{blob_name}?{container_sas_token}"
-    return blob_url_with_container_sas_token
 
 
 @app.route('/query_load', methods=['POST','GET'])
@@ -567,26 +635,6 @@ def get_posts_by_seller_id(seller_id):
     ],
         enable_cross_partition_query=True
     ))
-    return items
-
-def get_posts_by_id(id):
-    items = list(cos_container.query_items(
-    query="SELECT * FROM r WHERE r.id=@id",
-    parameters=[
-        { "name":"@id", "value": id }
-    ],
-        enable_cross_partition_query=True
-    ))
-    return items
-
-def get_posts_by_id_list(idList):
-    items = list(cos_container.query_items(
-            query=f"SELECT * FROM r WHERE ARRAY_CONTAINS(@ids, r.id)",
-            parameters=[
-                { "name":"@ids", "value": idList}
-                        ],
-            enable_cross_partition_query=is_city_partitioned
-            ))
     return items
 
 
