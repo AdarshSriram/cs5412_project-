@@ -30,3 +30,4 @@ azure-ai-textanalytics
 redis
 websocket-client
 flask-session
+gunicorn
