@@ -344,9 +344,10 @@ def render_notifs(val, make_ref = False):
 
     
 def create_sbus_topics(topics):
-    # lat, lon = get_user_pos(session['CURR_USER'])
+    lat, lon = get_user_pos(session['CURR_USER'])
+    city = session['city']
     # city = reverse_geocode.search(lat, lon)['city']
-    city = 'Ithaca'
+    # city = 'Ithaca'
     res = []
     with servicebus_mgmt_client as mgmt_cl:
         for topic in topics:
@@ -367,6 +368,7 @@ def create_sbus_topics(topics):
 
 def publish_post_to_topic(post, tag):
     res = create_sbus_topics([tag]) + [tag]
+    print("res",res)
     with servicebus_client:
         for topic in res:
         # get a Topic Sender object to send messages to the topic
@@ -382,7 +384,8 @@ def create_sbs_subscription(tags):
     user_id = session['CURR_USER']
     lat, lon = get_user_pos(user_id)
     # city = reverse_geocode.search(lat, lon)['city']
-    city = 'Ithaca'
+    # city = 'Ithaca'
+    city = session['city']
     with servicebus_mgmt_client as mgmt_cl:
         for tag in tags:
             topic = f"{city}_{tag}"
@@ -400,7 +403,8 @@ def get_subscription_msgs(tags, same_city = True):
     user_id = session['CURR_USER']
     lat, lon = get_user_pos(user_id)
     # city = reverse_geocode.search(lat, lon)['city']
-    city = 'Ithaca'
+    city = session['city']
+    # city = 'Ithaca'
     res = defaultdict(list)
     with servicebus_client:
         for tag in tags:
@@ -840,9 +844,9 @@ def hello():
                             pass
                     blob_client.set_blob_metadata(metadata)
                     blob_client.set_blob_tags(metadata)
-                item_name = session.get('name')
+                # item_name = session.get('name')
 
-                msg = item_name + " has been uploaded to the server!"
+                # msg = item_name + " has been uploaded to the server!"
                 os.remove(filename)
             print(tags)
             tags = [{"tag": tag} for tag in tags]
@@ -1173,7 +1177,7 @@ def update_container_tags(item,tags=''):
 
     })
     # publish to service bus topic
-    publish_post_to_topic(read, tags[0]['tag'])
+    publish_post_to_topic(read, str(tags[0]['tag']))
     return id
 
 

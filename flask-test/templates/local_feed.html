@@ -13,7 +13,18 @@
         <div class="px-4 py-3 my-2 text-center">
         <h1 class="display-6 fw-bold text-primary">Your Local Feed of Nearby Posts!</h1>
         <h2 class="display-6 fw-bold" style="font-size:20px">{{location}}</h1>
-        <a href="{{other_home_link}}">Link to: {{home_url}}</a>
+        <div style="display: flex; justify-content: center; padding: 10px; align-items: center; ;">
+            <a class="btn btn-primary btn-lg px-4 gap-3" style="margin: 10px" href="{{url_for('home')}}">Local Home</a>
+            <a href="{{ url_for('index') }}" style="margin: 10px" class="btn btn-primary btn-lg px-4 gap-3">List an item</a>
+            <a class="btn btn-primary btn-lg px-4 gap-3" style="margin: 10px" href="{{url_for('home_all')}}">All Recent Posts</a>
+        
+            <form action="{{url_for('query_results')}}" style="margin: 10px; align-items: center;" method="POST">
+                <input name="input" type="search" class=" btn-lg px-4 gap-3" placeholder="Search for an item">
+                <button class="btn btn-primary btn-lg px-4 gap-3" type="submit">Search</button>
+            </form>
+            <a href="{{ url_for('logout') }}" style="margin: 10px" class="btn btn-primary btn-lg px-4 gap-3">Logout</a>
+        
+        </div>
 
 
         </div>
