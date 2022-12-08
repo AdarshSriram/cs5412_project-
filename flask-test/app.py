@@ -136,7 +136,9 @@ ALL_TOPICS = set([])
 # servicebus_mgmt_client.close()
 
 
-# 
+ACTIVE_TASK_RADII = set([])
+ACTIVE_TASK_IDS = {}
+
 
 USER_TAGS = set([])
 
@@ -209,18 +211,25 @@ def login_is_required(function):  #a function to check if the user is authorized
 def fence(self, url, category = ""):
     """Background task that runs a long function with progress reports."""
     ws = create_connection(url)
+    id_set = set([])
     notifs = deque([], maxlen=50)
     while True:
         data = ws.recv()
         try:
             data = process_ws_res(data, category)
             if data is not None:
-                notifs.append(data)
-            self.update_state(state='PROGRESS',
-                                    meta={"data" : json.dumps(list(notifs))})
+                if data.get('post_id') not in id_set:
+                    print(category == data.get('category'))
+                    print(data.get('post_id'))
+                    id_set.add(data.get('post_id'))
+                    notifs.append(data)
         except:
             break
-    return {'data' : json.dumps(list(notifs))}
+
+        self.update_state(state='PROGRESS',
+                                    meta={"data" : json.dumps(list(notifs))})
+
+    return {'data' : json.dumps(list(notifs)), 'result': "end"}
 
 
 @app.route("/login")  #the page where the user can login
@@ -335,18 +344,36 @@ def get_posts_by_id_list(idList):
 @app.route('/roam/<radius>/<tags>')
 def longtask(radius='500', tags=""):
     session['CURR_USER'] = "69bd0823d287fbe035d068e3d4d22596"
-    url = f"ws://{leaderip}:9851/NEARBY+users+Match+{session['CURR_USER']}+FENCE+ROAM+posts+*+{radius}"
-    task = fence.delay(url)
-    return redirect(url_for('fence_status',task_id=task.id))
+    if radius not in ACTIVE_TASK_RADII:
+        ACTIVE_TASK_RADII.add(radius)
+        url = f"ws://{leaderip}:9851/NEARBY+users+Match+{session['CURR_USER']}+FENCE+ROAM+posts+*+{radius}"
+        task = fence.delay(url)
+        ACTIVE_TASK_IDS[radius] = task.id
+        return redirect(url_for('fence_status',task_id=task.id))
+    else:
+        return jsonify('Kill current listener and choose another radius')
 
 
 @app.route('/fence_status/<task_id>')
 def fence_status(task_id):
-    res = result.AsyncResult(id=task_id, app=celery)
-    print(res)
-    print(res.state)
-    print(res.info)
-    return jsonify(res.info.get('data'))
+    # res = result.AsyncResult(id=task_id, app=celery)
+    res = fence.AsyncResult(task_id)
+    try:
+        post_data = json.loads(res.info.get('data'))
+    except:
+        post_data = []
+    return jsonify(post_data)
+
+@app.route('/fence_status/<radius>')
+def radius_status(radius):
+    task_id = ACTIVE_TASK_IDS[radius]
+    # res = result.AsyncResult(id=task_id, app=celery)
+    res = fence.AsyncResult(task_id)
+    try:
+        post_data = json.loads(res.info.get('data'))
+    except:
+        post_data = []
+    return jsonify(post_data)
 
 
 @app.route('/kill_fence/<task_id>')

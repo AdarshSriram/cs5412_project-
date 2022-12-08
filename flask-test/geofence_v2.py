@@ -85,11 +85,9 @@ def process_ws_res(res, category = ""):
         # if category == '' or query_category != category_enum:
         return {
             "time" : r.get('time'),
-            "user_id" : r.get('id'),
-            "coordinates" : r['object']['coordinates'],
+            "coordinates" : (r['object']['coordinates'][1], r['object']['coordinates'][0]),
             'post_id' : r['nearby']['id'],
-            'category' : category, 
-            "distance" : r['nearby']['meters']
+            'category' : category
             }
         # else:
         #     return None
