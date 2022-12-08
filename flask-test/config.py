@@ -38,6 +38,9 @@ GOOGLE_DISCOVERY_URL = (
 
 REDIS_PASSWD = "PufNGfIGmel6V8NYtm1hjbSU4foQgBSh"
 
+REDIS_HOST = 'redis-10873.c265.us-east-1-2.ec2.cloud.redislabs.com'
+REDIS_PORT =10873
+
 leaderip = "20.85.191.185"
 followerip = '40.88.200.96'
 

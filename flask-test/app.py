@@ -25,12 +25,14 @@ from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 import ast
 import uuid
+import time
+from collections import deque
 from azure.cognitiveservices.vision.computervision.models import (
     OperationStatusCodes, VisualFeatureTypes)
 from azure.cosmos import CosmosClient
 from azure.storage.blob import (BlobServiceClient, ContainerSasPermissions,
                                 generate_container_sas)
-from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_DISCOVERY_URL, leaderip, followerip, AZURE_SERVICE_BUS_CONN_STR
+from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_DISCOVERY_URL, leaderip, followerip, AZURE_SERVICE_BUS_CONN_STR, REDIS_PASSWD, REDIS_HOST, REDIS_PORT
 from flask_caching import Cache
 from geofence import check_within_latlng_500
 from google.oauth2 import id_token
@@ -50,6 +52,7 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 from azure.servicebus.management import ServiceBusAdministrationClient
 from flask_session import Session
+from celery import Celery, result
 from azure.ai.textanalytics import TextAnalyticsClient
 from azure.core.credentials import AzureKeyCredential
 import rediscnfg
@@ -124,11 +127,13 @@ useGeofenceV1 = False
 servicebus_client = ServiceBusClient.from_connection_string(conn_str=AZURE_SERVICE_BUS_CONN_STR, logging_enable=True)
 servicebus_mgmt_client = ServiceBusAdministrationClient.from_connection_string(AZURE_SERVICE_BUS_CONN_STR)
 
-ALL_TOPICS = set([])
-with servicebus_mgmt_client:
-    for topic_properties in servicebus_mgmt_client.list_topics():
-        ALL_TOPICS.add(topic_properties.name)
+category_hasher = hashlib.md5()
 
+ALL_TOPICS = set([])
+# with servicebus_mgmt_client:
+#     for topic_properties in servicebus_mgmt_client.list_topics():
+#         ALL_TOPICS.add(topic_properties.name)
+# servicebus_mgmt_client.close()
 
 
 # 
@@ -137,9 +142,6 @@ USER_TAGS = set([])
 
 # flag if test db is partitioned on city/category
 is_city_partitioned = True
-
-leader = redis.Redis(host=leaderip, port=9851)
-follower = redis.Redis(host=followerip, port=9851)
 
 NEARBY_POSTS_WS = None
 
@@ -160,11 +162,19 @@ SESSION_IP_OBJECT = geocoder.ip('me')
 IP_LAT, IP_LON = SESSION_IP_OBJECT.latlng
 IP_CITY = SESSION_IP_OBJECT.city
 
+app.config['CELERY_BROKER_URL'] = f"redis://:{REDIS_PASSWD}@{REDIS_HOST}:{REDIS_PORT}/0"
+app.config['CELERY_RESULT_BACKEND'] = f"redis://:{REDIS_PASSWD}@{REDIS_HOST}:{REDIS_PORT}/0"
+
 
 # tmp
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  #this is to set our environment to https because OAuth 2.0 only supports https environments
 
 client_secrets_file = os.path.join(pathlib.Path(__file__).parent, "client_secret.json")  #set the path to where the .json file you got Google console is
+
+# Initialize Celery
+celery = Celery(app.name, backend=app.config['CELERY_RESULT_BACKEND'], broker=app.config['CELERY_BROKER_URL'])
+celery.conf.update(app.config)
+
 
 flow = Flow.from_client_secrets_file(  #Flow is OAuth 2.0 a class that stores all the information on how we want to authorize our users
     client_secrets_file=client_secrets_file,
@@ -182,6 +192,35 @@ def login_is_required(function):  #a function to check if the user is authorized
             return function()
 
     return wrapper
+
+
+# @celery.task
+# def send_async_email(email_data):
+#     """Background task to send an email with Flask-Mail."""
+#     msg = Message(email_data['subject'],
+#                   sender=app.config['MAIL_DEFAULT_SENDER'],
+#                   recipients=[email_data['to']])
+#     msg.body = email_data['body']
+#     with app.app_context():
+#         mail.send(msg)
+
+
+@celery.task(bind=True)
+def fence(self, url, category = ""):
+    """Background task that runs a long function with progress reports."""
+    ws = create_connection(url)
+    notifs = deque([], maxlen=50)
+    while True:
+        data = ws.recv()
+        try:
+            data = process_ws_res(data, category)
+            if data is not None:
+                notifs.append(data)
+            self.update_state(state='PROGRESS',
+                                    meta={"data" : json.dumps(list(notifs))})
+        except:
+            break
+    return {'data' : json.dumps(list(notifs))}
 
 
 @app.route("/login")  #the page where the user can login
@@ -291,6 +330,29 @@ def get_posts_by_id_list(idList):
     return items
 
 
+@app.route('/roam/')
+@app.route('/roam/<radius>')
+@app.route('/roam/<radius>/<tags>')
+def longtask(radius='500', tags=""):
+    session['CURR_USER'] = "69bd0823d287fbe035d068e3d4d22596"
+    url = f"ws://{leaderip}:9851/NEARBY+users+Match+{session['CURR_USER']}+FENCE+ROAM+posts+*+{radius}"
+    task = fence.delay(url)
+    return redirect(url_for('fence_status',task_id=task.id))
+
+
+@app.route('/fence_status/<task_id>')
+def fence_status(task_id):
+    res = result.AsyncResult(id=task_id, app=celery)
+    print(res)
+    print(res.state)
+    print(res.info)
+    return jsonify(res.info.get('data'))
+
+
+@app.route('/kill_fence/<task_id>')
+def kill_ws(task_id):
+    celery.control.revoke(task_id, terminate=True)
+    return redirect('/home')
 
 # @cache.cached()
 # def notifs(radius): 
@@ -350,6 +412,7 @@ def create_sbus_topics(topics):
     res = []
     with servicebus_mgmt_client as mgmt_cl:
         for topic in topics:
+            topic = topic.replace(" ", "")
             name = f"{city}_{topic}"
             res.append(name)
             try:
@@ -369,11 +432,15 @@ def publish_post_to_topic(post, tag):
     res = create_sbus_topics([tag]) + [tag]
     with servicebus_client:
         for topic in res:
+            topic = topic.replace(" ", "")
         # get a Topic Sender object to send messages to the topic
             sender = servicebus_client.get_topic_sender(topic_name=topic)
             with sender:
-                sender.send_messages(ServiceBusMessage(post.get('name', ""),application_properties=post))
-                print("MESSAGE")
+                try:
+                    sender.send_messages(ServiceBusMessage(post.get('name', ""),application_properties=post))
+                    print("msg sent")
+                except:
+                    continue
             sender.close()
     servicebus_client.close()
 
@@ -385,6 +452,7 @@ def create_sbs_subscription(tags):
     city = 'Ithaca'
     with servicebus_mgmt_client as mgmt_cl:
         for tag in tags:
+            tag = tag.replace(" ", "")
             topic = f"{city}_{tag}"
             sub = f"{user_id}_{tag}"
             try:
@@ -404,6 +472,7 @@ def get_subscription_msgs(tags, same_city = True):
     res = defaultdict(list)
     with servicebus_client:
         for tag in tags:
+            tag = tag.replace(" ", "")
             topic = tag
             if same_city:
                 topic = f"{city}_{tag}"
@@ -1324,5 +1393,5 @@ def handle_exception(e):
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", debug=True)
-    leader.close()
-    follower.close()
+    # leader.close()
+    # follower.close()
