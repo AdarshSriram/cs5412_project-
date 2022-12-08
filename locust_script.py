@@ -1,5 +1,5 @@
 import time
-from locust import HttpUser, task, between
+from locust_script import HttpUser, task, between
 import locust_plugins
 from random import randint
 

@@ -1,5 +1,12 @@
 import json
-from app import leader, follower, dev_client, LOGGER, IP_LAT, IP_LON
+import redis
+# from app import IP_LAT, IP_LON, category_hasher
+from config import leaderip, followerip
+
+IP_LAT, IP_LON =0, 0
+
+leader = redis.Redis(host=leaderip, port=9851)
+follower = redis.Redis(host=followerip, port=9851)
 
 def get_user_pos(user_id):
     try:
@@ -8,7 +15,7 @@ def get_user_pos(user_id):
         coords = res.get('coordinates')
         return (coords[1], coords[0])
     except Exception as e:
-        LOGGER.warn(e)
+        # LOGGER.warn(e)
         return [IP_LAT, IP_LON]
 
 def get_user_categoryEnum(user_id):
@@ -70,7 +77,7 @@ def set_post_fence(post_id, category):
     leader.execute_command(f"sethook notify https://tile38hook.azurewebsites.net/api/testhook NEARBY users Where category {category} FENCE POINT {lat} {lng} 500")
     
 
-def process_ws_res(res, category = "testcategory"):
+def process_ws_res(res, category = ""):
     r =  json.loads(res)
     if "ok" in r:
         print("Roaming Fence Activated")
@@ -79,12 +86,10 @@ def process_ws_res(res, category = "testcategory"):
         # post_id = r['nearby']['id']
         # postObj = json.loads(follower.execute_command('GET', 'posts', str(post_id), 'WITHFIELDS'))
         # category_enum = int(postObj['field']['category'])
-        # category_str =  DESERIALIZE[category_enum]
-        # if category != 'test_category' or category_str != category:
-        #     return None
-        
-        
-        # TODO: figure out GET parsing to check category
+        # m = category_hasher
+        # m.update(category)
+        # query_category = str(int(m.hexdigest(), 16))[0:12]
+        # if category == '' or query_category != category_enum:
         return {
             "time" : r.get('time'),
             "user_id" : r.get('id'),
@@ -92,7 +97,9 @@ def process_ws_res(res, category = "testcategory"):
             'post_id' : r['nearby']['id'],
             'category' : category, 
             "distance" : r['nearby']['meters']
-        }
+            }
+        # else:
+        #     return None
 
     
 
