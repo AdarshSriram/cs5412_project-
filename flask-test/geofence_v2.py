@@ -1,12 +1,5 @@
 import json
-import redis
-# from app import IP_LAT, IP_LON, category_hasher
-from config import leaderip, followerip
-
-IP_LAT, IP_LON =0, 0
-
-leader = redis.Redis(host=leaderip, port=9851)
-follower = redis.Redis(host=followerip, port=9851)
+from rediscnfg import leader, follower, dev_client, LOGGER, IP_LAT, IP_LON
 
 def get_user_pos(user_id):
     try:

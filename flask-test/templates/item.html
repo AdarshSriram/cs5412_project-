@@ -8,15 +8,24 @@
 </head>
 <html>
 
-<body>
-    <main>
+<body style="min-width: 1000px">
+    <main >
+    <div style="display: flex; justify-content: center; padding: 10px; align-items: center; ;">
+
+        <a class="btn btn-primary btn-lg px-4 gap-3" style="margin: 10px" href="{{url_for('home')}}">Home</a>
+</div>
         <div class="px-4 py-3 my-2 text-center">
+            
             <h1 class="display-6 fw-bold text-primary">{{itemname}}</h1>
         </div>
+        <div style="display:flex; align-items: center; justify-content: center;">
+            <!-- <p style="font-size: 16px; text-align: center;">Item Categories: <br>{{ tags }} </p> -->
+            <p style="font-size: 30px; text-align: center;">Item Location: {{ city }} </p>
+        </div>
         {% for pics in pics_list | batch (3) %}
-        <div class="row-cols-3" style="display: flex; justify-content: center;">
+        <div class="row-cols-3 .row-cols-sm-3" style="display: flex; justify-content: center;">
             {% for value in pics %}
-            <div class="col-3" style="padding: 10px; background-color: #EEE; margin: 20px; text-align: center;">
+            <div class="col-3 .cols-sm-3" style="padding: 10px; background-color: #EEE; margin: 20px; text-align: center;">
                 <p></p>
                 <div style="display:flex; justify-content: center; align-items: center; max-height: 90%;">
                     <img style="max-width: 100%; height: auto" src="{{value}}" />
@@ -27,12 +36,29 @@
         </div>
         {% endfor %}
         <div style="display:flex; align-items: center; justify-content: center;">
-            <p style="font-size: 24px; text-align: center;">Description: <br>{{ desc }} </p>
-            
+            <p style="font-size: 24px; text-align: center; padding-left: 100px; padding-right: 100px">Description: <br>{{ desc }} </p>
         </div>
-        <div style="display:flex; align-items: center; justify-content: center;">
-            <p style="font-size: 16px; text-align: center;">Item Categories: <br>{{ tags }} </p>
-        
+            <p style="font-size: 24px; text-align: center;">Contact Info: <br>{{ contact }} </p>
+
+            <!-- <p style="font-size: 12px; text-align: center;"><br>{{ tags }} </p> -->
+            <p style="font-size: 20px; text-align: center;"><br>{{rcmd}} </p>
+    
+        <div class="row-cols-3 " style="display: flex; justify-content: center;">
+
+        {% for value in dict %}
+        <!-- <div> -->
+        <div class="col-3 .cols-sm-3" style="padding: 10px; background-color: #EEE; margin: 20px; text-align: center; ">
+
+            <p style="font-size: 24px">{{ value["name"] }}</p>
+            <div style="display:flex; justify-content: center; align-items: center; max-height: 90%;">
+                <img style="max-width: 100%; height: auto" src='{{value["img"]}}' />
+            </div>
+            <p style="font-size: 12px">{{ value["descr"] }}</p>
+            <a style="font-size: 14px;" href="{{url_for('item', item_id = value['id'])}}">Link to Item Page</a>
+        </div>
+        <!-- </div> -->
+        {% endfor %}
+
         </div>
 
 

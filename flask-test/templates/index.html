@@ -18,7 +18,7 @@
             <button type="submit" class="btn btn-primary btn-lg px-4 gap-3">Go to query!</button>
           </div>
         </form>
-        <form method="post" action="{{url_for('hello')}}">
+        <form method="post" action="{{url_for('hello')}}" enctype="multipart/form-data">
             <div class="col-md-6 mx-auto text-center">
                 <label for="name" class="form-label fw-bold fs-5">What item / service do you want to list?</label>
 
@@ -30,15 +30,22 @@
                   <div class="d-grid gap-2 d-sm-flex justify-content-sm-center align-items-center my-1">
                     <textarea id="freeform" name="freeform" rows="4" cols="50" placeholder="Enter item/service description here..."></textarea>
                   </div>
+                  <div class="d-grid gap-2 d-sm-flex justify-content-sm-center align-items-center my-1">Contact Info (Phone or Email):
+                    <input type="text" class="form-control" id="contact" name="contact" style="max-width: 256px;">
+                  </div>
 
                 <div>
-                  <p>Pictures can be uploaded on the next page.</p>
+                  <p>Upload photos</p>
+                  <input type="file" name="files[]" multiple="true" value="file" required/>
+
                </div>
+
+       
                   
                 <div class="d-grid gap-2 d-sm-flex justify-content-sm-center my-2">
                   <button type="submit" class="btn btn-primary btn-lg px-4 gap-3">Add item!</button>
                 </div>            
-                <p id="message_to_user">{{msg}}</p>
+                <!-- <p id="message_to_user">{{msg}}</p> -->
             </div>
         </form>
      </main>  
@@ -63,3 +70,5 @@
      
    </body>
 </html>
+
+

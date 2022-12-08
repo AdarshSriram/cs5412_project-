@@ -20,8 +20,12 @@ google-auth-oauthlib==0.4.2
 requests==2.25.1
 requests-oauthlib==1.3.0
 pyle38
-asyncio
+# asyncio
 geocoder
 celery
 nltk
 reverse_geocode
+azure-servicebus
+azure-ai-textanalytics
+redis
+websocket-client
