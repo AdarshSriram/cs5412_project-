@@ -1,57 +1,89 @@
-// const ws = new WebSocket("ws://localhost:3001");
-var ws;
+var ws = undefined;
 var websocket_created = false;
-var we
 
-// Create a broadcast channel to notify about state changes
-const broadcastChannel = new BroadcastChannel("WebSocketChannel");
+process_ws_res = (data) => {
+    var r = JSON.parse(data);
+    if (r.ok === undefined){
+        var category = 1;
+        if (r.field && r.field.category){
+            category = r.field.category
+        }
+        const obj = {
+            lat: r.object.coordinates[1],
+            lon: r.object.coordinates[0],
+            id: r.nearby.id,
+            categoryEnum: category,
+            distance_in_m: r.nearby.meters
+        }
+        return obj
+    }
+    else {
+        return false
+    }
+}
 
-// Mapping to keep track of ports. You can think of ports as
-// mediums through we can communicate to and from tabs.
-// This is a map from a uuid assigned to each context(tab)
-// to its Port. This is needed because Port API does not have
-// any identifier we can use to identify messages coming from it.
-const  idToPortMap  = {};
+var notif_queue = []
+var notif_id_set = new Set();
+var curr_ws_url = undefined;
 
-// Event handler called when a tab tries to connect to this worker.
+const NOTIF_MAX_SIZE = 10
+const PING_NOTIF_SIZE = 10
+
 onconnect = e => {
-  // Get the MessagePort from the event. This will be the
-  // communication channel between SharedWorker and the Tab
-  const  port  =  e.ports[0];
+ 
+  const port  =  e.ports[0];
+
   port.onmessage  =  msg  => {
-        idToPortMap[msg.data.from] =  port;
-        if (!websocket_created && msg.data.url !== undefined){
-            websocket_created = true;
-            ws = new WebSocket(msg.data.url);
-            // Let all connected contexts(tabs) know about state cahnges
-            ws.onopen = () => broadcastChannel.postMessage({ type: "WSState", state: ws.readyState });
-            ws.onclose = () => broadcastChannel.postMessage({ type: "WSState", state: ws.readyState });
+        if (msg.data.isUrl !== undefined){
 
-            // When we receive data from the server.
-            ws.onmessage  = ({ data }) => {
-            // Construct object to be passed to handlers
-            const parsedData = { data:  JSON.parse(data), type:  "message" }
-            if (!parsedData.data.from) {
-                // Broadcast to all contexts(tabs). This is because 
-                // no particular id was set on the from field here. 
-                // We're using this field to identify which tab sent
-                // the message
-                broadcastChannel.postMessage(parsedData);
-            } else {
-                // Get the port to post to using the uuid, ie send to
-                // expected tab only.
-                idToPortMap[parsedData.data.from].postMessage(parsedData);
+            if (websocket_created && !(curr_ws_url === msg.data.data)) {
+                ws.close();
+                ws = undefined;
+                websocket_created = false;
             }
-            };
-        }
-        else if(msg.data.closeConn){
-            ws.close();
-        }
-  };
+            ws = new WebSocket(msg.data.data);
+            websocket_created = true;
+            curr_ws_url = msg.data.data;
 
-  // We need this to notify the newly connected context to know
-  // the current state of WS connection.
-  if (websocket_created) {
-    port.postMessage({ state: ws.readyState, type: "WSState"});
-  }
-};
+            console.log("Listening ...")
+            
+            ws.onmessage  = ({ data }) => {
+                const post = process_ws_res(data)
+                if (!!post && !notif_id_set.has(post.id)){
+                    // port.postMessage(realtime_notif);
+                    notif_id_set.add(post.id);
+                    notif_queue.push(post);
+                }
+                if (notif_queue.length == NOTIF_MAX_SIZE){
+                    port.postMessage({
+                        data: notif_queue,
+                        type: "batch"
+                    });
+                    const last_post = notif_queue.shift();
+                    notif_id_set.delete(last_post.id)
+                }
+            }
+    
+        }; 
+    }
+
+    setInterval(
+        () => {
+            if (websocket_created){
+                var r = []
+                if (notif_queue.length < PING_NOTIF_SIZE){
+                    r= notif_queue
+                }
+                else{
+                    r = notif_queue.slice(-PING_NOTIF_SIZE)
+                }
+                const ping = {
+                    data: r,
+                    type: "recent_notifs"
+                }
+                port.postMessage(ping);
+            }
+        }, 3000);
+
+    port.start();
+}

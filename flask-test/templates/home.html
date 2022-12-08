@@ -57,9 +57,9 @@
 
     <script>
         if (!!window.SharedWorker && navigator.geolocation) {
-            var worker = new SharedWorker("{{url_for('static', filename='common.js')}}");
-            worker.port.start(); 
-            worker.port.onmessage = function(e){console.log(e.data)}; 
+            var locWorker = new SharedWorker("{{url_for('static', filename='common.js')}}");
+            locWorker.port.start(); 
+            locWorker.port.onmessage = function(e){console.log(e.data)}; 
             navigator.geolocation.getCurrentPosition(sendLocation);
             function sendLocation(position) {
                     const msg = {
@@ -68,9 +68,9 @@
                         host : '{{host}}',
                         user_id : '{{user_id}}'
                     }
-                    worker.port.postMessage(msg);
-                    console.log('{{user_id}}');
-                }
+                locWorker.port.postMessage(msg);
+                console.log('{{user_id}}');
+            }
         }
     </script>
 
