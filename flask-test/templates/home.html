@@ -3,40 +3,48 @@
 <head>
     <title>Home Site</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='bootstrap/css/bootstrap.min.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='bootstrap/css/product.css') }}">
+
     <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <script src="{{url_for('static', filename='bootstrap/js/messages.js')}}"></script>
 </head>
 <html>
 
-<body>
+<body style="min-width: 1000px">
     <main>
         <div class="px-4 py-3 my-2 text-center">
         <h1 class="display-6 fw-bold text-primary">Welcome to the marketplace!</h1>
         <h2 class="display-6 fw-bold" style="font-size:20px">{{location}}</h1>
-        <a href="{{other_home_link}}">Link to: {{other_home}}</a>
-    <div style="display: flex; justify-content: center;">
+        
+    <div style="display: flex; justify-content: center; padding: 10px; align-items: center; ;">
+        <a class="btn btn-primary btn-lg px-4 gap-3" style="margin: 10px" href="{{other_home_link}}">{{other_home}}</a>
+        <a href="{{ url_for('index') }}" style="margin: 10px" class="btn btn-primary btn-lg px-4 gap-3">List an item</a>
+        <a class="btn btn-primary btn-lg px-4 gap-3" style="margin: 10px" href="{{url_for('get_local_feed')}}">All Nearby Posts</a>
 
-        <form action="{{url_for('query_results')}}" method="POST">
-            <input name="input" type="search" placeholder="Search for an item">
-
-            <button type="submit">Search</button>
+        <form action="{{url_for('query_results')}}" style="margin: 10px; align-items: center;" method="POST">
+            <input name="input" type="search"   class=" btn-lg px-4 gap-3" placeholder="Search for an item">
+            <button class="btn btn-primary btn-lg px-4 gap-3" type="submit">Search</button>
         </form>
-        </div>
+        <a href="{{ url_for('action') }}" style="margin: 10px" class="btn btn-primary btn-lg px-4 gap-3">{{action}}</a>
 
+        </div>
+            
 
         </div>
         {% for dict in recent | batch (3)  %}
-        <div class="row-cols-3" style="display: flex; justify-content: center;">
+        <div class="row-cols-3 " style="display: flex; justify-content: center;">
             {% for value in dict %}
-            <div class="col-3" style="padding: 10px; background-color: #EEE; margin: 20px; text-align: center;">
-                <p style="font-size: 24px">{{ value["name"] }}</p>
-                <div style="display:flex; justify-content: center; align-items: center; max-height: 90%;">
-                <img style="max-width: 100%; height: auto" src='{{value["img"]}}'/>
+            <div class="col-3 .cols-sm-3" style="padding: 10px; background-color: #EEE; margin: 20px; text-align: center; display: flex; flex-direction: column;">
+                <p style="font-size: 24px; margin-bottom: auto;">{{ value["name"] }}</p>
+                <div style="display:flex; justify-content: center; align-items: center; max-height: 90%;margin-top: auto; ">
+                <img style="max-width: 100%; height: auto " src='{{value["img"]}}'/>
                 </div>
-                <p style="font-size: 12px">{{ value["descr"] }}</p>
-                <a style="font-size: 14px;" href="{{url_for('item', item_id = value['id'])}}">Link to Item Page</a>
+                <p style="font-size: 12px;  margin-top: auto;">{{ value["descr"] }}</p>
+                <a style="font-size: 14px; margin-top: auto;"href="{{url_for('item', item_id = value['id'])}}">Link to Item Page</a>
 
             </div>
+
+
             {% endfor %}
 
         </div>

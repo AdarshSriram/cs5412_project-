@@ -25,6 +25,9 @@ BLOB_MAX_CONTENT_LENGTH = 20 * 1024 * 1024    # 20 Mb limit
 CV_KEY = 'b9e10182ec6d45aaab209c666aeb73cb'
 CV_ENDPOINT = 'https://projectvisionservice.cognitiveservices.azure.com/'
 
+TEXT_KEY = '606cfd6343ae45ffa352b9959f52507c'
+TEXT_ENDPOINT = 'https://geomarket-text.cognitiveservices.azure.com/'
+
 
 # Authenitcation with Google
 GOOGLE_CLIENT_ID = "1006873411191-4gd8m83dkokbsjgha2r0i0kbe3l2d94s.apps.googleusercontent.com"
