@@ -417,13 +417,12 @@ def create_sbus_topics(topics):
             name = f"{city}_{topic}"
             res.append(name)
             try:
-                if name not in ALL_TOPICS:
-                    mgmt_cl.create_topic(name)
-                    ALL_TOPICS.add(name)
-                if topic not in ALL_TOPICS:
-                    mgmt_cl.create_topic(topic)
-                    ALL_TOPICS.add(topic)
+                mgmt_cl.create_topic(name)
+                print(f"CREATED topic{name}")
+                mgmt_cl.create_topic(topic)
+                print(f"CREATED topic {topic}")
             except:
+                print("topic exists")
                 continue
     mgmt_cl.close()
     return res
@@ -439,9 +438,16 @@ def publish_post_to_topic(post, tag):
             sender = servicebus_client.get_topic_sender(topic_name=topic)
             with sender:
                 try:
-                    sender.send_messages(ServiceBusMessage(post.get('name', ""),application_properties=post))
+                    properties = {
+                        'id' : post.get('id'),
+                        "target_lat": post.get("target_lat"),
+                        "target_lng" : post.get("target_lng"),
+                        "title": post.get('title')[:20]
+                    }
+                    sender.send_messages(ServiceBusMessage("default_msg",application_properties=properties))
                     print("msg sent")
-                except:
+                except Exception as e:
+                    print(e)
                     continue
             sender.close()
     servicebus_client.close()
@@ -461,15 +467,16 @@ def create_sbs_subscription(tags):
             try:
                 mgmt_cl.create_subscription(topic, sub)
                 mgmt_cl.create_subscription(tag, sub)
-            except:
+            except Exception as e:
+                print(e)
                 continue
     mgmt_cl.close()
 
 
 def get_subscription_msgs(tags, same_city = True):
-    session['CURR_USER']  = "69bd0823d287fbe035d068e3d4d22596"
+    # session['CURR_USER']  = "69bd0823d287fbe035d068e3d4d22596"
     user_id = session['CURR_USER']
-    lat, lon = get_user_pos(user_id)
+    # lat, lon = get_user_pos(user_id)
     # city = reverse_geocode.search(lat, lon)['city']
     city = session['city']
     # city = 'Ithaca'
@@ -481,22 +488,25 @@ def get_subscription_msgs(tags, same_city = True):
             if same_city:
                 topic = f"{city}_{tag}"
             subscription = f"{user_id}_{tag}"
-            receiver = servicebus_client.get_subscription_receiver(
-                topic_name=topic,
-                subscription_name=subscription
-            )
-            with receiver:
-                received_msgs = receiver.receive_messages(max_message_count=10, max_wait_time=5)
-                for msg in received_msgs:
-                    if msg is not None and msg.application_properties is not None:
-                        post_obj = {}
-                        print()
-                        for k, v in msg.application_properties.items():
-                            if type(v) == bytes:
-                                v = v.decode('utf-8')
-                            post_obj[k.decode('utf-8')] = v
-                        res[topic].append(post_obj)
-                    receiver.complete_message(msg)
+            try:
+                receiver = servicebus_client.get_subscription_receiver(
+                    topic_name=topic,
+                    subscription_name=subscription
+                )
+                with receiver:
+                    received_msgs = receiver.receive_messages(max_message_count=10, max_wait_time=5)
+                    for msg in received_msgs:
+                        if msg is not None and msg.application_properties is not None:
+                            post_obj = {}
+                            print()
+                            for k, v in msg.application_properties.items():
+                                if type(v) == bytes:
+                                    v = v.decode('utf-8')
+                                post_obj[k.decode('utf-8')] = v
+                            res[topic].append(post_obj)
+                        receiver.complete_message(msg)
+            except:
+                res[topic] = {"error" : f"Not subscribed to {topic}, or {topic} does not exist"}
     
     servicebus_client.close()
     return res
